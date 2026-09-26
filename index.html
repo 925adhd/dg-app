@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Real Total — Dollar General Coupon Calculator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="site-header">
+    <div class="header-inner">
+      <h1 class="wordmark">The Real Total</h1>
+      <p class="tagline">An unofficial coupon &amp; tax calculator for Dollar General runs — know your total before you're in line.</p>
+    </div>
+    <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch to dark mode"></button>
+  </header>
+
+  <main class="layout">
+
+    <section class="panel panel-form" aria-label="Cart setup">
+
+      <div class="control-group">
+        <h2>Tax</h2>
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">State</span>
+            <select id="state-select"></select>
+          </label>
+          <label class="field field-narrow">
+            <span class="field-label">Sales tax rate</span>
+            <div class="unit-input">
+              <input type="number" id="tax-rate" min="0" max="15" step="0.01" inputmode="decimal">
+              <span class="unit">%</span>
+            </div>
+          </label>
+        </div>
+        <p class="hint">Estimated average combined rate for <span id="rate-state-name">Kentucky</span>. Dollar General taxes each register based on the exact store's local rate, so edit this to match your receipt if you know it.</p>
+      </div>
+
+      <div class="control-group">
+        <h2>Basket coupon</h2>
+        <div class="radio-grid" id="basket-options">
+          <label class="radio-pill"><input type="radio" name="basket" value="none" checked><span>None</span></label>
+          <label class="radio-pill"><input type="radio" name="basket" value="5-25"><span>$5 off $25</span></label>
+          <label class="radio-pill"><input type="radio" name="basket" value="10-30"><span>$10 off $30</span></label>
+          <label class="radio-pill"><input type="radio" name="basket" value="10-40"><span>$10 off $40</span></label>
+          <label class="radio-pill"><input type="radio" name="basket" value="custom"><span>Custom</span></label>
+        </div>
+        <div class="custom-basket" id="custom-basket-fields" hidden>
+          <label class="field field-narrow">
+            <span class="field-label">$ off</span>
+            <div class="unit-input"><span class="unit">$</span><input type="number" id="custom-amount" min="0" step="0.01"></div>
+          </label>
+          <label class="field field-narrow">
+            <span class="field-label">Orders of $</span>
+            <div class="unit-input"><span class="unit">$</span><input type="number" id="custom-threshold" min="0" step="0.01"></div>
+          </label>
+        </div>
+        <p class="hint">Applies only after sale prices and DG store coupons bring your subtotal to the threshold — manufacturer coupons don't count toward it.</p>
+        <p class="threshold-status" id="threshold-status" hidden></p>
+      </div>
+
+      <div class="control-group">
+        <h2>Spend &amp; save deals</h2>
+        <p class="hint hint-top">For offers like "Save $5 when you spend $25 on select P&amp;G products" or "$3 Instant Savings when you spend $15." Tick the items that count toward each deal.</p>
+        <div id="spend-list"></div>
+        <button type="button" id="add-spend" class="add-button add-button-secondary">+ Add spend &amp; save deal</button>
+      </div>
+
+      <div class="control-group">
+        <div class="items-header">
+          <h2>Items</h2>
+        </div>
+        <div id="items-list"></div>
+        <button type="button" id="add-item" class="add-button">+ Add item</button>
+      </div>
+
+      <button type="button" id="clear-all" class="ghost-button">Clear everything</button>
+    </section>
+
+    <aside class="panel panel-receipt" aria-label="Receipt">
+      <div class="receipt-wrap">
+        <svg class="receipt-edge receipt-edge-top" viewBox="0 0 200 16" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0,0 L200,0 L200,3 L189,15 L182,4 L175,14 L168,2 L161,13 L154,5 L147,16 L140,3 L133,12 L126,1 L119,14 L112,6 L105,15 L98,2 L91,11 L84,4 L77,16 L70,3 L63,13 L56,5 L49,15 L42,1 L35,12 L28,4 L21,16 L14,2 L7,13 L0,4 Z"></path>
+        </svg>
+        <div class="receipt-tape" id="receipt"></div>
+        <svg class="receipt-edge receipt-edge-bottom" viewBox="0 0 200 16" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M0,0 L200,0 L200,3 L189,15 L182,4 L175,14 L168,2 L161,13 L154,5 L147,16 L140,3 L133,12 L126,1 L119,14 L112,6 L105,15 L98,2 L91,11 L84,4 L77,16 L70,3 L63,13 L56,5 L49,15 L42,1 L35,12 L28,4 L21,16 L14,2 L7,13 L0,4 Z"></path>
+        </svg>
+      </div>
+    </aside>
+
+  </main>
+
+  <div class="sticky-total" id="sticky-total" hidden>
+    <span class="sticky-total-label">Total right now</span>
+    <span class="sticky-total-amount" id="sticky-total-amount">$0.00</span>
+  </div>
+
+  <footer class="site-footer">
+    <details class="how-it-works">
+      <summary>How this is calculated</summary>
+      <ol>
+        <li>Start from each item's sale price — this is the price you'll actually be charged before any coupons, so fold in any "Instant Savings" markdown shown on the shelf tag here too.</li>
+        <li>Apply any multi-buy deal (Buy X Get Y free/%/$ off, X for $ bundle pricing, or Buy X Save $) based on how many you're buying. Mark what it "counts as" — a store offer, a DG coupon, or a manufacturer coupon — since that decides when it applies, whether it counts toward the basket-coupon threshold, and whether it counts toward the tax you owe. A deal marked as a DG coupon or manufacturer coupon locks the matching field below it, since only one of each is allowed per item.</li>
+        <li>Check each spend &amp; save deal ("Save $5 when you spend $25") against the items you ticked for it, using their price after sale prices and store offer deals. If you spend enough, the savings are spread proportionally across those items. A deal counted as Instant Savings comes off right away, one counted as a DG coupon comes off with the DG coupons, and one counted as a manufacturer coupon comes off at the very end, after tax is figured.</li>
+        <li>Subtract DG store/digital coupons (and any multi-buy deal marked as one) — a coupon never pushes an item below $0.</li>
+        <li>Check your subtotal against the basket coupon's threshold. Manufacturer coupons — including multi-buy deals marked as manufacturer coupons — don't count toward this check.</li>
+        <li>If you qualify, the basket coupon (like $5 off $25) is spread proportionally across your qualifying items, the same way Dollar General's registers do it.</li>
+        <li>Sales tax is calculated here — on the price after sale price, DG coupons, and the basket coupon, but <strong>before</strong> manufacturer coupons. A manufacturer coupon is reimbursed to the store by the manufacturer rather than being a store price cut, so most states still tax you on the pre-coupon price.</li>
+        <li>Manufacturer coupons come off last, each capped at whatever the item still costs — no overage. They lower what you pay, but not what you were just taxed on.</li>
+      </ol>
+      <p class="disclaimer">Not affiliated with or endorsed by Dollar General. Tax rates are estimates — actual store totals can vary by a few cents depending on local tax rules and rounding.</p>
+    </details>
+  </footer>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
