@@ -23,25 +23,20 @@
   })();
 
   const themeToggle = document.getElementById('theme-toggle');
-  const systemPrefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
 
   function getStoredTheme() {
     try { return localStorage.getItem(THEME_KEY); } catch (e) { return null; }
   }
 
+  // Light by default, regardless of the device's dark mode setting — dark
+  // only when the shopper has picked it with the toggle.
   function effectiveTheme() {
-    const stored = getStoredTheme();
-    return (stored === 'light' || stored === 'dark') ? stored : (systemPrefersDark() ? 'dark' : 'light');
+    return getStoredTheme() === 'dark' ? 'dark' : 'light';
   }
 
   function applyTheme() {
-    const stored = getStoredTheme();
-    if (stored === 'light' || stored === 'dark') {
-      document.documentElement.setAttribute('data-theme', stored);
-    } else {
-      document.documentElement.removeAttribute('data-theme');
-    }
     const current = effectiveTheme();
+    document.documentElement.setAttribute('data-theme', current);
     themeToggle.innerHTML = current === 'dark' ? SUN_ICON : MOON_ICON;
     themeToggle.setAttribute('aria-label', current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
   }
@@ -51,10 +46,6 @@
     try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* storage unavailable */ }
     applyTheme();
   });
-
-  const darkMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-  const handleSystemChange = () => { if (!getStoredTheme()) applyTheme(); };
-  if (darkMediaQuery.addEventListener) darkMediaQuery.addEventListener('change', handleSystemChange);
 
   applyTheme();
 

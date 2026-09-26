@@ -21,24 +21,7 @@
   --font-tape: 'IBM Plex Mono', 'Courier New', monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --backdrop: #0D0D0D;
-    --paper: #1D1D1D;
-    --ink: #EFEFEC;
-    --muted: #A2A2A0;
-    --line: #3A3A3A;
-    --tag: #E8B33D;
-    --tag-bg: #3A2E14;
-    --cash: #5FBE8B;
-    --cash-bg: #1B3226;
-    --alert: #FF6B7A;
-    --alert-bg: #3D1116;
-    --focus: #FFCC00;
-    --dg-yellow-strong: #FFD633;
-  }
-}
-
+/* Light is the default; dark applies only when chosen with the toggle. */
 :root[data-theme="dark"] {
   --backdrop: #0D0D0D;
   --paper: #1D1D1D;
