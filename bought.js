@@ -409,9 +409,10 @@
           <div class="haul-receipt">
             <div class="haul-receipt-row">
               <label><span class="field-label">Receipt total (with tax)</span><input type="number" class="haul-receipt-total" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></label>
+              <label><span class="field-label">Kept for myself (before tax)</span><input type="number" class="haul-receipt-kept" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></label>
               <button type="button" class="add-button add-button-secondary" data-action="spread-tax">Spread tax</button>
             </div>
-            <p class="haul-receipt-note">Type each item’s price from the receipt, before tax, as its Paid total. Then enter the receipt’s total here and the tax is split across the items.</p>
+            <p class="haul-receipt-note">Type each item’s price from the receipt, before tax, as its Paid total. Then enter the receipt’s total, plus the prices of anything you kept for yourself added together, and the tax is split across the items.</p>
           </div>
           <div class="haul-add">
             <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
@@ -937,22 +938,27 @@
     const items = itemsOf(haulId);
     const total = cleanMoney($('.haul-receipt-total', haulEl).value);
     const bases = items.map((it) => round2(it.totalPaid - it.taxPaid));
-    const subtotal = round2(bases.reduce((s, b) => s + b, 0));
+    // What was kept for personal use takes its share of the tax with it
+    // without ever being added as items.
+    const kept = cleanMoney($('.haul-receipt-kept', haulEl).value);
+    const itemsSubtotal = round2(bases.reduce((s, b) => s + b, 0));
+    const subtotal = round2(itemsSubtotal + kept);
     const note = (text, tone = '') => {
       const el = $(`.haul[data-haul="${CSS.escape(haulId)}"] .haul-receipt-note`);
       if (el) { el.textContent = text; el.className = `haul-receipt-note ${tone}`; }
     };
-    if (!total || !subtotal) {
+    if (!total || !itemsSubtotal) {
       note('Enter each item’s Paid total and the receipt total first.', 'bad');
       return;
     }
-    const tax = round2(total - subtotal);
-    if (tax < 0) {
-      note(`Your items add up to ${money(subtotal)} before tax, which is more than the receipt total. Check that each Paid total is the price before tax.`, 'bad');
+    const allTax = round2(total - subtotal);
+    if (allTax < 0) {
+      note(`Your items${kept ? ' and what you kept' : ''} add up to ${money(subtotal)} before tax, which is more than the receipt total. Check that each Paid total is the price before tax.`, 'bad');
       return;
     }
+    const tax = round2(allTax * (itemsSubtotal / subtotal));
     items.forEach((it, n) => {
-      it.taxPaid = round2(tax * (bases[n] / subtotal));
+      it.taxPaid = round2(tax * (bases[n] / itemsSubtotal));
       it.totalPaid = round2(bases[n] + it.taxPaid);
     });
     // Rounding pennies land on the priciest item so the haul matches the receipt.
@@ -964,7 +970,7 @@
     }
     save();
     render();
-    note(`Added ${money(tax)} tax across ${items.length} item${items.length === 1 ? '' : 's'}. Paid totals now include tax and add up to ${money(total)}.`, 'good');
+    note(`Added ${money(tax)} tax across ${items.length} item${items.length === 1 ? '' : 's'}. Paid totals now include tax${kept ? '' : ` and add up to ${money(total)}`}.`, 'good');
   }
 
   // ---------- Item pop-up ----------
