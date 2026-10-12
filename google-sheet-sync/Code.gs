@@ -1,4 +1,10 @@
 /**
+ * @OnlyCurrentDoc
+ * Limits this script's permission to the one spreadsheet it's attached to,
+ * so Google never grants it access to your other sheets.
+ */
+
+/**
  * The Real Total — Google Sheet sync backend for purchases (the "Bought" tab),
  * the calculator and its saved scenarios.
  *
