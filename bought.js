@@ -546,6 +546,7 @@
             ${field('Fees & shipping', 'inv-sell-fees', `min="0" step="0.01" inputmode="decimal" placeholder="${pricing.commission ? `${pricing.commission}% commission` : '0.00'}"`)}
             ${field('Sold on', 'inv-sell-platform', `maxlength="${MAX_TEXT}" placeholder="e.g. eBay"`, 'text')}
           </div>
+          ${pricing.commission ? `<label class="inv-sell-outside"><input type="checkbox" class="inv-sell-outside-box"> Sold outside the booth (no ${pricing.commission}% commission)</label>` : ''}
           <button type="button" class="add-button inv-sell-btn" data-action="record-sale">Record sale</button>
         </details>`}
         ${g.lots.length > 1 ? `<details class="inv-lots">
@@ -605,6 +606,9 @@
       g.prices = [cleanMoney(el.value)];
       g.potential = g.lots.reduce((s, it) => s + itemCalc(it).potential, 0);
       $('.b-foot', card).innerHTML = invFootHTML(g);
+    } else if (el.classList.contains('inv-sell-outside-box')) {
+      $('.inv-sell-fees', card).placeholder = el.checked ? '0.00' : `${pricing.commission}% commission`;
+      return;
     } else if (el.classList.contains('inv-location')) {
       g.lots.forEach((it) => { it.location = cleanText(el.value); });
       g.places = el.value.trim() ? [el.value.trim()] : [];
@@ -671,8 +675,10 @@
     }
     const total = cleanMoney($('.inv-sell-total', card).value);
     const feesInput = $('.inv-sell-fees', card).value;
-    // Blank fees + a commission set = the commission is the fee.
-    const fees = feesInput === '' ? round2(total * (pricing.commission / 100)) : cleanMoney(feesInput);
+    // Blank fees + a commission set = the commission is the fee, unless it
+    // sold outside the booth, where the booth takes nothing.
+    const outside = $('.inv-sell-outside-box', card)?.checked;
+    const fees = feesInput === '' && !outside ? round2(total * (pricing.commission / 100)) : cleanMoney(feesInput);
     recordSale(g, qty, total, fees, cleanText($('.inv-sell-platform', card).value.trim()));
     save();
     renderSummary();

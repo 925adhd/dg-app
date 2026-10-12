@@ -1432,6 +1432,8 @@ select:focus, input:focus {
   font-size: 0.85rem;
 }
 .inv-sell-btn { margin-top: 10px; }
+.inv-sell-outside { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 0.85rem; }
+.inv-sell-outside input { width: 18px; height: 18px; margin: 0; flex: none; }
 .inv-lots { margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
 .inv-lots summary { cursor: pointer; }
 .inv-lots ul { margin: 6px 0 0; padding-left: 0; list-style: none; line-height: 1.5; }
