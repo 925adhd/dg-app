@@ -134,7 +134,7 @@
   ];
 
   const DEAL_LABELS = {
-    none: 'No multi-buy deal',
+    none: 'No deal',
     free: 'Buy X Get Y Free',
     pct: 'Buy X Get Y at % off',
     dollar: 'Buy X Get Y at $ off',
@@ -231,7 +231,7 @@
     row.dataset.uid = data.uid || newUid();
     row.innerHTML = `
       <div class="item-row-top">
-        <input type="text" class="item-name" placeholder="Item name (e.g. Tide Simply)" value="${escapeAttr(data.name || '')}">
+        <input type="text" class="item-name" placeholder="Item name" value="${escapeAttr(data.name || '')}">
         <button type="button" class="remove-item" aria-label="Remove item">&times;</button>
         <button type="button" class="hide-item"></button>
       </div>
@@ -246,7 +246,7 @@
         </label>
         <label>
           <span class="field-label">Sale price</span>
-          <input type="number" class="f-sale" min="0" step="0.01" placeholder="same as retail" value="${data.sale ?? ''}"
+          <input type="number" class="f-sale" min="0" step="0.01" placeholder="= retail" value="${data.sale ?? ''}"
             title="The price you'll actually be charged before any coupons — fold in Instant Savings here too.">
         </label>
         <label>
@@ -322,7 +322,7 @@
     const repeat = data.repeat !== false;
     row.innerHTML = `
       <div class="item-row-top">
-        <input type="text" class="spend-name" placeholder="Deal name (e.g. P&G digital coupon)" value="${escapeAttr(data.name || '')}">
+        <input type="text" class="spend-name" placeholder="Deal name" value="${escapeAttr(data.name || '')}">
         <button type="button" class="remove-item remove-spend" aria-label="Remove deal">&times;</button>
       </div>
       <div class="field-row spend-fields">

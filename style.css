@@ -385,7 +385,7 @@ select:focus, input:focus {
   flex-wrap: wrap;
   gap: 10px 14px;
 }
-.deal-row-top .field-narrow { flex: 0 1 165px; }
+.deal-row-top .field-narrow { flex: 1 1 140px; }
 .deal-row-top .field-label {
   line-height: 1.3;
   min-height: 2.6em;
