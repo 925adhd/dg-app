@@ -1029,7 +1029,6 @@ select:focus, input:focus {
   border-left: 4px solid var(--dg-yellow);
   border-radius: 10px;
 }
-.haul-loose { border-left-color: var(--line); }
 .haul-summary, .b-item-toggle {
   display: flex;
   align-items: center;
@@ -1084,6 +1083,19 @@ select:focus, input:focus {
   color: var(--muted);
 }
 .haul-head { margin-bottom: 12px; }
+.haul-danger { display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.haul-delete {
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--alert);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.haul-delete:hover { background: var(--alert-bg); }
 .sync-update { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); }
 .sync-update-title { margin: 0; font-size: 0.9rem; font-weight: 700; }
 
@@ -1422,7 +1434,31 @@ select:focus, input:focus {
 .inv-sell-btn { margin-top: 10px; }
 .inv-lots { margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
 .inv-lots summary { cursor: pointer; }
-.inv-lots ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }
+.inv-lots ul { margin: 6px 0 0; padding-left: 0; list-style: none; line-height: 1.5; }
+.inv-lots li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; border-top: 1px solid var(--line); }
+.inv-lots li:first-child { border-top: none; }
+.inv-edit {
+  flex: 0 0 auto;
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.inv-edit:hover { border-color: var(--ink); background: var(--tag-bg); }
+.inv-edit-one { margin-top: 10px; color: var(--ink); font-weight: 600; }
+.inv-edit-one:hover { color: var(--ink); border-color: var(--ink); background: var(--tag-bg); }
+.inv-onhand.inv-soldout { background: var(--cash-bg); color: var(--cash); }
+.item-dialog { width: min(560px, calc(100vw - 24px)); }
+.item-dialog .scan-head { align-items: flex-start; }
+.item-origin { margin: 2px 0 0; font-size: 0.85rem; color: var(--muted); }
+.item-dialog .b-item { border: none; padding: 0; margin: 0; }
+.item-dialog .b-item-toggle { cursor: default; }
+.item-dialog .chevron { display: none; }
 .pricing-apply { margin-top: 12px; color: var(--ink); }
 .pricing-apply:hover { color: var(--ink); border-color: var(--ink); }
 .pricing-panel .field-narrow { flex: 1 1 160px; }

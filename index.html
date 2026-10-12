@@ -156,7 +156,7 @@
     <section class="bought">
 
       <div class="bought-search-row">
-        <input type="search" id="bought-search" class="bought-search" placeholder="Search items, trips, barcodes" aria-label="Search purchases" autocomplete="off">
+        <input type="search" id="bought-search" class="bought-search" placeholder="Search items, hauls, barcodes" aria-label="Search purchases" autocomplete="off">
         <button type="button" class="bought-scan" id="bought-scan" aria-label="Scan barcodes to look up or add products" title="Scan barcodes to look up or add products">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>
@@ -169,7 +169,7 @@
 
       <div class="bought-toolbar">
         <div class="segmented" role="radiogroup" aria-label="View">
-          <label class="segment"><input type="radio" name="bought-view" value="trips" checked><span>By trip</span></label>
+          <label class="segment"><input type="radio" name="bought-view" value="trips" checked><span>By haul</span></label>
           <label class="segment"><input type="radio" name="bought-view" value="inventory"><span>Inventory</span></label>
         </div>
         <div class="filter-chips" id="trip-filters" role="radiogroup" aria-label="Show">
@@ -178,8 +178,8 @@
           <label class="filter-chip"><input type="radio" name="bought-filter" value="sold"><span>Sold</span></label>
         </div>
         <div class="add-buttons">
-          <button type="button" class="add-haul add-loose" id="add-loose" title="Add one item that isn't part of a shopping trip">+ Single item</button>
-          <button type="button" class="add-haul" id="add-haul" title="Start a shopping trip and add what you bought">+ New trip</button>
+          <button type="button" class="add-haul add-loose" id="add-loose" title="Add one item to your inventory without starting a haul">+ Single item</button>
+          <button type="button" class="add-haul" id="add-haul" title="Start a new haul and add what you bought">+ New haul</button>
         </div>
       </div>
       <p class="threshold-status" id="inv-message" hidden aria-live="polite"></p>

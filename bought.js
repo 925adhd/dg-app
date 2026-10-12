@@ -257,6 +257,9 @@
   });
 
   // ---------- Rendering ----------
+  // All / In stock / Sold, remembered separately for each view.
+  const viewFilter = { trips: 'all', inventory: 'stock' };
+
   function filterMode() {
     const checked = filterInputs.find((r) => r.checked);
     return checked ? checked.value : 'all';
@@ -328,7 +331,7 @@
     STATUS_LABELS[itemCalc(it).status],
   ].filter(Boolean).join(' · ');
 
-  const haulTitle = (h) => h.name || h.store || 'Shopping trip';
+  const haulTitle = (h) => h.name || h.store || 'Haul';
 
   function itemHTML(it, forceOpen = false) {
     const open = forceOpen || openItems.has(it.id);
@@ -377,27 +380,25 @@
       </div>`;
   }
 
-  // A trip (or, with h = null, the card for items without a trip): a one-line
-  // summary that opens to show its items.
+  // A trip: a one-line summary that opens to show its items.
   function haulHTML(h, items, forceOpen = false) {
-    const id = h ? h.id : '';
+    const id = h.id;
     const open = forceOpen || openHauls.has(id);
-    const head = h ? `
+    const head = `
           <div class="haul-head">
             <div class="haul-fields">
-              <input type="date" data-h="date" value="${esc(h.date)}" aria-label="Trip date">
-              <input type="text" data-h="name" placeholder="Trip name (optional)" maxlength="${MAX_TEXT}" value="${esc(h.name)}" aria-label="Trip name">
+              <input type="date" data-h="date" value="${esc(h.date)}" aria-label="Haul date">
+              <input type="text" data-h="name" placeholder="Haul name (optional)" maxlength="${MAX_TEXT}" value="${esc(h.name)}" aria-label="Haul name">
               <input type="text" data-h="store" placeholder="Store" maxlength="${MAX_TEXT}" value="${esc(h.store)}" aria-label="Store">
             </div>
-            <button type="button" class="ghost-button" data-action="delete-haul">Delete trip</button>
-          </div>` : '';
+          </div>`;
     return `
-      <article class="haul${h ? '' : ' haul-loose'}${open ? ' is-open' : ''}" data-haul="${esc(id)}">
+      <article class="haul${open ? ' is-open' : ''}" data-haul="${esc(id)}">
         <button type="button" class="haul-summary" data-action="toggle-haul" aria-expanded="${open}">
           <span class="haul-summary-text">
             <span class="haul-title-row">
-              <span class="haul-title">${esc(h ? haulTitle(h) : 'Items without a trip')}</span>
-              ${h ? `<span class="haul-date">${esc(formatDate(h.date))}</span>` : ''}
+              <span class="haul-title">${esc(haulTitle(h))}</span>
+              <span class="haul-date">${esc(formatDate(h.date))}</span>
             </span>
             <span class="haul-totals">${esc(haulTotalsText(id))}</span>
           </span>
@@ -408,6 +409,9 @@
           <div class="haul-add">
             <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
             <button type="button" class="add-button add-button-secondary" data-action="scan-items">Scan items</button>
+          </div>
+          <div class="haul-danger">
+            <button type="button" class="haul-delete" data-action="delete-haul">Delete this haul</button>
           </div>
         </div>
       </article>`;
@@ -430,10 +434,9 @@
     const mode = filterMode();
     const q = searchQuery();
     const sorted = data.hauls.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-    const loose = itemsOf('').filter((it) => itemMatches(it, mode) && itemSearchMatch(it, q));
     // Searching or filtering opens every trip that has a match.
     const reveal = !!q || mode !== 'all';
-    const html = (loose.length ? haulHTML(null, loose, reveal) : '') + sorted.map((h) => {
+    const html = sorted.map((h) => {
       const all = itemsOf(h.id);
       // A search that matches the trip itself (name or store) shows the whole trip.
       const tripHit = q && (has(h.name, q) || has(h.store, q));
@@ -442,15 +445,17 @@
       if (!shown.length && (q || mode !== 'all' || all.length)) return '';
       return haulHTML(h, shown, reveal && shown.length > 0);
     }).join('');
-    haulList.innerHTML = html || `<p class="empty-note">${data.hauls.length || data.items.length
-      ? (q ? 'Nothing matches that search.' : 'Nothing matches this filter.')
-      : 'No purchases yet. Build a receipt on the Calculator tab and tap “Save to Bought”, or start a new trip by hand.'}</p>`;
+    haulList.innerHTML = html || `<p class="empty-note">${data.hauls.length
+      ? (q ? 'No hauls match that search. Single items are in Inventory.' : 'Nothing matches this filter.')
+      : data.items.length
+        ? 'No hauls yet. Your single items are in Inventory.'
+        : 'No purchases yet. Build a receipt on the Calculator tab and tap “Save to Bought”, or start a new haul by hand.'}</p>`;
     showPhotos(haulList);
   }
 
   // ---------- Inventory view ----------
-  // Every unsold unit across all trips, merged by product name so the same
-  // thing bought on three trips reads as one line with a combined count.
+  // Everything you've bought — from trips and single items — merged by
+  // product name so the same thing bought three times reads as one line.
   const productKey = (name) => (name || '').trim().toLowerCase().replace(/\s+/g, ' ') || '(unnamed)';
   let invGroups = [];
 
@@ -464,7 +469,6 @@
     });
     const byKey = new Map();
     data.items.forEach((it) => {
-      if (it.soldQty >= it.qty) return;
       const key = productKey(it.name);
       if (!byKey.has(key)) byKey.set(key, { key, name: firstName.get(key), lots: [] });
       byKey.get(key).lots.push(it);
@@ -490,33 +494,47 @@
     const resell = g.prices.length === 1 ? money(g.prices[0]) : `${money(Math.min(...g.prices))}–${money(Math.max(...g.prices))}`;
     const below = g.lots.filter((it) => itemCalc(it).belowCost);
     const worstCost = below.reduce((m, it) => Math.max(m, itemCalc(it).unitCost), 0);
+    if (!g.onHand) {
+      const sold = g.lots.reduce((t, it) => ({ units: t.units + it.soldQty, total: t.total + it.soldTotal, profit: t.profit + itemCalc(it).profit }), { units: 0, total: 0, profit: 0 });
+      return `<span>Sold ${sold.units} for ${money(sold.total)}</span>`
+        + `<span class="${sold.profit < 0 ? 'bad' : 'good'}">Profit ${signedMoney(sold.profit)}</span>`;
+    }
     return `<span>Avg cost ${money(g.onHand ? g.cost / g.onHand : 0)}</span>`
       + `<span>Retail ${money(g.lots[0].unitRetail)}</span>`
       + `<span>Price ${resell}</span>`
       + `<span class="${g.potential < 0 ? 'bad' : 'good'}">Potential ${signedMoney(g.potential)}</span>`
-      + (g.lots.length > 1 ? `<span class="muted">from ${g.lots.length} trips</span>` : '')
+      + (g.lots.length > 1 ? `<span class="muted">bought ${g.lots.length} times</span>` : '')
       + (below.length ? `<span class="below-cost">Below cost — price at ${money(minPrice(worstCost))}+ to break even</span>` : '');
   }
 
   // Lowest price that still covers cost once the commission comes out.
   const minPrice = (unitCost) => Math.ceil((unitCost / Math.max(0.01, 1 - pricing.commission / 100)) * 100) / 100;
 
+  // Where one purchase of a product came from: its trip, or "Single item".
+  function lotOrigin(it) {
+    const h = it.haulId && data.hauls.find((x) => x.id === it.haulId);
+    return h ? `${formatDate(h.date)} haul${h.name ? ` (${h.name})` : ''}` : 'Single item';
+  }
+
   function invGroupHTML(g, index) {
     const lotLines = g.lots.map((it) => {
       const c = itemCalc(it);
-      return `<li>${it.haulId ? esc(formatDate(g.haulDate.get(it.haulId))) : 'Without a trip'} · ${c.left} left · ${money(c.unitCost)} each${it.location ? ` · ${esc(it.location)}` : ''}${it.notes ? ` · ${esc(it.notes)}` : ''}</li>`;
+      return `<li><span>${esc(lotOrigin(it))} · ${c.left} of ${it.qty} left · ${money(c.unitCost)} each${it.location ? ` · ${esc(it.location)}` : ''}${it.notes ? ` · ${esc(it.notes)}` : ''}</span>`
+        + `<button type="button" class="inv-edit" data-action="edit-lot" data-item="${esc(it.id)}">Edit</button></li>`;
     }).join('');
+    const soldOut = !g.onHand;
     const field = (label, cls, attrs, type = 'number') => `<label><span class="field-label">${label}</span><input type="${type}" class="${cls}" ${attrs}></label>`;
     return `
       <div class="b-item inv-item" data-group="${index}">
         <div class="inv-head">
           ${photoThumbHTML((g.lots.find((it) => it.photo) || {}).photo, g.name)}
           <span class="inv-name">${esc(g.name)}</span>
-          <span class="inv-onhand">${g.onHand} on hand</span>
-          <button type="button" class="remove-item" data-action="remove-stock" aria-label="Remove from inventory">&times;</button>
+          ${soldOut ? '<span class="inv-onhand inv-soldout">Sold out</span>' : `<span class="inv-onhand">${g.onHand} on hand</span>`}
+          ${soldOut ? '' : '<button type="button" class="remove-item" data-action="remove-stock" aria-label="Remove from inventory">&times;</button>'}
         </div>
         <div class="b-foot">${invFootHTML(g)}</div>
-        <div class="b-grid b-grid-2">
+        ${g.lots.length === 1 ? `<button type="button" class="ghost-button inv-edit-one" data-action="edit-lot" data-item="${esc(g.lots[0].id)}">Edit details</button>` : ''}
+        ${soldOut ? '' : `<div class="b-grid b-grid-2">
           <label><span class="field-label">Resell at (each)</span><input type="number" class="inv-resell" min="0" step="0.01" inputmode="decimal" value="${g.prices.length === 1 ? esc(blankIfZero(g.prices[0])) : ''}" placeholder="${g.prices.length === 1 ? '0.00' : 'mixed'}"></label>
           <label><span class="field-label">Location</span><input type="text" class="inv-location" maxlength="${MAX_TEXT}" value="${g.places.length === 1 ? esc(g.places[0]) : ''}" placeholder="${g.places.length > 1 ? esc(g.places.join(', ')) : 'e.g. Bin 3'}"></label>
         </div>
@@ -529,23 +547,26 @@
             ${field('Sold on', 'inv-sell-platform', `maxlength="${MAX_TEXT}" placeholder="e.g. eBay"`, 'text')}
           </div>
           <button type="button" class="add-button inv-sell-btn" data-action="record-sale">Record sale</button>
-        </details>
-        <details class="inv-lots">
-          <summary>Where it came from (${g.lots.length})</summary>
+        </details>`}
+        ${g.lots.length > 1 ? `<details class="inv-lots">
+          <summary>Where it came from · edit (${g.lots.length})</summary>
           <ul>${lotLines}</ul>
-        </details>
+        </details>` : ''}
       </div>`;
   }
 
   function renderInventory() {
     invGroups = buildInventory();
     const q = searchQuery();
+    const mode = filterMode();
+    const inMode = (g) => (mode === 'stock' ? g.onHand > 0 : mode === 'sold' ? g.lots.some((it) => it.soldQty > 0) : true);
     const shown = invGroups
       .map((g, i) => ({ g, i }))
-      .filter(({ g }) => !q || has(g.name, q) || g.lots.some((it) => itemSearchMatch(it, q)));
+      .filter(({ g }) => inMode(g) && (!q || has(g.name, q) || g.lots.some((it) => itemSearchMatch(it, q))));
+    const none = { stock: 'Nothing in stock.', sold: 'Nothing sold yet.', all: 'Nothing here yet.' }[mode] || 'Nothing here yet.';
     invList.innerHTML = shown.length
       ? shown.map(({ g, i }) => invGroupHTML(g, i)).join('')
-      : `<p class="empty-note">${invGroups.length ? 'Nothing in stock matches that search.' : 'Nothing in stock. Items you buy show up here until they’re sold.'}</p>`;
+      : `<p class="empty-note">${q ? 'Nothing matches that search.' : `${none} Add a haul or a single item to fill your inventory.`}</p>`;
     showPhotos(invList);
   }
 
@@ -600,7 +621,7 @@
     const trips = g.lots.length;
     if (!await window.appConfirm({
       title: `Remove ${g.onHand} × ${g.name}?`,
-      message: `This takes ${g.onHand === 1 ? 'it' : 'them'} out of your purchases${trips > 1 ? ` (from ${trips} trips)` : ''}. Any sales you've recorded for it are kept.`,
+      message: `This takes ${g.onHand === 1 ? 'it' : 'them'} out of your purchases${trips > 1 ? ` (from ${trips} hauls)` : ''}. Any sales you've recorded for it are kept.`,
       confirmText: 'Remove', cancelText: 'Keep', danger: true,
     })) return;
     const lots = new Set(g.lots);
@@ -620,6 +641,12 @@
   }
 
   invList.addEventListener('click', (e) => {
+    const editBtn = e.target.closest('[data-action="edit-lot"]');
+    if (editBtn) {
+      const it = data.items.find((i) => i.id === editBtn.dataset.item);
+      if (it) openItemEditor(it);
+      return;
+    }
     const photoBtn = e.target.closest('[data-action="photo"]');
     if (photoBtn) {
       const g = invGroups[Number(photoBtn.closest('.inv-item').dataset.group)];
@@ -743,7 +770,10 @@
   function setView(mode) {
     const inv = mode === 'inventory';
     viewInputs.forEach((r) => { r.checked = r.value === (inv ? 'inventory' : 'trips'); });
-    tripFilters.hidden = inv;
+    // Trips get "+ New trip"; Inventory gets "+ Single item".
+    addHaulBtn.hidden = inv;
+    $('#add-loose').hidden = !inv;
+    filterInputs.forEach((r) => { r.checked = r.value === viewFilter[inv ? 'inventory' : 'trips']; });
     haulList.hidden = inv;
     invList.hidden = !inv;
     if (!inv) invMessage.hidden = true;
@@ -756,6 +786,7 @@
   function render() {
     renderSummary();
     if (viewMode() === 'inventory') renderInventory(); else renderHauls();
+    refreshItemEditor();
   }
 
   // ---------- Editing ----------
@@ -778,11 +809,16 @@
       return;
     }
 
-    const itemEl = el.closest('.b-item');
+    if (applyItemEdit(el, el.closest('.b-item'))) {
+      $('.haul-totals', haulEl).textContent = haulTotalsText(haulEl.dataset.haul);
+    }
+  });
+
+  // Applies a change typed into an item's details, wherever they're shown.
+  function applyItemEdit(el, itemEl) {
     const f = el.dataset.f;
-    if (!itemEl || !f) return;
-    const it = data.items.find((i) => i.id === itemEl.dataset.item);
-    if (!it) return;
+    const it = f && itemEl && data.items.find((i) => i.id === itemEl.dataset.item);
+    if (!it) return null;
 
     if (f === 'qty') it.qty = Math.max(1, Math.round(num(el.value) || 1));
     else if (f === 'soldQty') it.soldQty = Math.max(0, Math.round(num(el.value)));
@@ -794,15 +830,14 @@
 
     save();
     $('.b-foot', itemEl).innerHTML = itemFootHTML(it);
-    $('.haul-totals', haulEl).textContent = haulTotalsText(haulEl.dataset.haul);
     $('.b-item-name', itemEl).textContent = it.name || 'Unnamed item';
     $('.b-item-meta', itemEl).textContent = itemMetaText(it);
     renderSummary();
-  });
+    return it;
+  }
 
   // Once something is marked sold, fill in today's date if none is set yet.
-  haulList.addEventListener('change', (e) => {
-    const el = e.target;
+  function fillSoldDate(el) {
     const itemEl = el.closest('.b-item');
     if (!itemEl || (el.dataset.f !== 'soldQty' && el.dataset.f !== 'soldTotal')) return;
     const it = data.items.find((i) => i.id === itemEl.dataset.item);
@@ -811,7 +846,34 @@
     $('input[data-f="soldDate"]', itemEl).value = it.soldDate;
     if (el.dataset.f === 'soldQty' && it.soldQty > it.qty) el.value = it.qty;
     save();
-  });
+  }
+  haulList.addEventListener('change', (e) => fillSoldDate(e.target));
+
+  // The photo, barcode-scan and delete buttons in an item's details.
+  // Returns true if it was one of those.
+  async function itemAction(btn, e) {
+    const it = data.items.find((i) => i.id === (btn.closest('.b-item') || {}).dataset?.item);
+    if (!it) return false;
+    const action = btn.dataset.action;
+    if (action === 'photo') {
+      openPhoto([it]);
+    } else if (action === 'scan-upc') {
+      e.preventDefault(); // don't let the tap fall through to the label's input
+      scanItemBarcode(it);
+    } else if (action === 'delete-item') {
+      if (!await window.appConfirm({
+        title: `Delete ${it.name ? `“${it.name}”` : 'this item'}?`,
+        message: 'This can’t be undone.',
+        confirmText: 'Delete', cancelText: 'Keep', danger: true,
+      })) return true;
+      data.items = data.items.filter((i) => i !== it);
+      save();
+      render();
+    } else {
+      return false;
+    }
+    return true;
+  }
 
   haulList.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
@@ -824,9 +886,6 @@
     } else if (btn.dataset.action === 'toggle-item') {
       const itemEl = btn.closest('.b-item');
       toggleOpen(itemEl, openItems, itemEl.dataset.item, '.b-item-body');
-    } else if (btn.dataset.action === 'photo') {
-      const it = data.items.find((i) => i.id === btn.closest('.b-item').dataset.item);
-      if (it) openPhoto([it]);
     } else if (btn.dataset.action === 'add-item') {
       const it = cleanItem({ haulId, qty: 1 });
       data.items.push(it);
@@ -836,36 +895,95 @@
       focusItem(it.id);
     } else if (btn.dataset.action === 'scan-items') {
       scanIntoHaul(haulId);
-    } else if (btn.dataset.action === 'scan-upc') {
-      e.preventDefault(); // don't let the tap fall through to the label's input
-      const it = data.items.find((i) => i.id === btn.closest('.b-item').dataset.item);
-      if (it) scanItemBarcode(it);
-    } else if (btn.dataset.action === 'delete-item') {
-      const id = btn.closest('.b-item').dataset.item;
-      const it = data.items.find((i) => i.id === id);
-      if (!await window.appConfirm({
-        title: `Delete ${it && it.name ? `“${it.name}”` : 'this item'}?`,
-        message: 'This can’t be undone.',
-        confirmText: 'Delete', cancelText: 'Keep', danger: true,
-      })) return;
-      data.items = data.items.filter((i) => i.id !== id);
-      save();
-      render();
     } else if (btn.dataset.action === 'delete-haul') {
       const count = itemsOf(haulId).length;
       if (!await window.appConfirm({
-        title: 'Delete this whole trip?',
+        title: 'Delete this whole haul?',
         message: (count ? `Its ${count} item${count === 1 ? '' : 's'} will be deleted too. ` : '') + 'This can’t be undone.',
-        confirmText: 'Delete trip', cancelText: 'Keep', danger: true,
+        confirmText: 'Delete haul', cancelText: 'Keep', danger: true,
       })) return;
       data.hauls = data.hauls.filter((h) => h.id !== haulId);
       data.items = data.items.filter((i) => i.haulId !== haulId);
       save();
       render();
+    } else {
+      itemAction(btn, e);
     }
   });
 
-  filterInputs.forEach((r) => r.addEventListener('change', renderHauls));
+  // ---------- Item pop-up ----------
+  // Full details for one item, opened from Inventory or "+ Single item".
+  let itemDialog = null;
+  let editing = null;
+  let editingNew = false;
+
+  const blankItem = (it) => !it.name && !it.upc && !it.photo && !it.unitRetail && !it.totalPaid
+    && !it.location && !it.notes && !it.soldQty && !it.soldTotal;
+
+  function refreshItemEditor() {
+    if (!itemDialog || !itemDialog.open || !editing) return;
+    if (!data.items.includes(editing)) { itemDialog.close(); return; }
+    $('.item-origin', itemDialog).textContent = editingNew ? 'Goes straight into your Inventory — no haul needed.' : `From: ${lotOrigin(editing)}`;
+    $('.item-editor', itemDialog).innerHTML = itemHTML(editing, true);
+    showPhotos(itemDialog);
+  }
+
+  function openItemEditor(it, isNew = false) {
+    if (!itemDialog) {
+      itemDialog = document.createElement('dialog');
+      itemDialog.className = 'scan-dialog item-dialog';
+      itemDialog.setAttribute('aria-labelledby', 'item-dialog-title');
+      itemDialog.innerHTML = `
+        <div class="scan-body">
+          <div class="scan-head">
+            <div>
+              <h2 class="scan-title" id="item-dialog-title"></h2>
+              <p class="item-origin"></p>
+            </div>
+            <button type="button" class="scan-close" data-close aria-label="Close">&times;</button>
+          </div>
+          <div class="item-editor"></div>
+        </div>
+      `;
+      itemDialog.addEventListener('input', (e) => applyItemEdit(e.target, e.target.closest('.b-item')));
+      itemDialog.addEventListener('change', (e) => fillSoldDate(e.target));
+      itemDialog.addEventListener('click', (e) => {
+        if (e.target === itemDialog || e.target.closest('[data-close]')) { itemDialog.close(); return; }
+        const btn = e.target.closest('[data-action]');
+        if (btn && btn.dataset.action !== 'toggle-item') itemAction(btn, e);
+      });
+      itemDialog.addEventListener('close', () => {
+        const it = editing;
+        const wasNew = editingNew;
+        editing = null;
+        if (!it) return;
+        // A new single item closed without anything filled in isn't kept.
+        if (wasNew && data.items.includes(it) && blankItem(it)) {
+          data.items = data.items.filter((i) => i !== it);
+          save();
+        }
+        if (wasNew && data.items.includes(it)) {
+          searchInput.value = '';
+          setView('inventory');
+          showInvMessage(`Added ${it.name || 'your item'} to Inventory.`, 'met');
+        } else {
+          render();
+        }
+      });
+      document.body.appendChild(itemDialog);
+    }
+    editing = it;
+    editingNew = isNew;
+    $('.scan-title', itemDialog).textContent = isNew ? 'Add a single item' : 'Item details';
+    itemDialog.showModal();
+    refreshItemEditor();
+    if (isNew && !it.name) $('.item-name', itemDialog).focus();
+  }
+
+  filterInputs.forEach((r) => r.addEventListener('change', () => {
+    viewFilter[viewMode()] = r.value;
+    render();
+  }));
 
   // Puts the cursor in a just-added item's name box.
   function focusItem(id) {
@@ -876,13 +994,8 @@
   $('#add-loose').addEventListener('click', () => {
     const it = cleanItem({ haulId: '', qty: 1 });
     data.items.push(it);
-    openHauls.add('');
-    openItems.add(it.id);
-    filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
-    searchInput.value = '';
     save();
-    setView('trips');
-    focusItem(it.id);
+    openItemEditor(it, true);
   });
 
   addHaulBtn.addEventListener('click', () => {
@@ -892,7 +1005,7 @@
     data.items.push(it);
     openHauls.add(haul.id);
     openItems.add(it.id);
-    filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
+    viewFilter.trips = 'all';
     searchInput.value = '';
     save();
     setView('trips');
@@ -1005,14 +1118,14 @@
 
   // `onAdded` runs as soon as the item is in the trip, before any online lookup.
   async function addScannedItem(haulId, code, onAdded = () => {}) {
-    if (haulId !== '' && !data.hauls.some((h) => h.id === haulId)) return { text: 'That trip is gone.', tone: 'unmet', close: true };
+    if (haulId !== '' && !data.hauls.some((h) => h.id === haulId)) return { text: 'That haul is gone.', tone: 'unmet', close: true };
     const same = data.items.find((i) => i.haulId === haulId && i.upc === code);
     if (same) {
       same.qty += 1;
       save();
       render();
       onAdded(same);
-      return { text: `${same.name || code} — now ${same.qty} in this trip.`, tone: 'met' };
+      return { text: `${same.name || code} — now ${same.qty} in this haul.`, tone: 'met' };
     }
     // A new trip starts with one empty row; scanning replaces it.
     const blank = (i) => i.haulId === haulId && haulId !== '' && !i.name && !i.upc && !i.unitRetail && !i.totalPaid && !i.soldQty && !i.location && !i.notes;
@@ -1134,7 +1247,7 @@
   function scanIntoHaul(haulId) {
     const session = scanSession(() => haulId);
     window.openScanner({
-      title: 'Scan items into this trip',
+      title: 'Scan items into this haul',
       hint: 'Scan each item. Use + for more than one of the same thing. Tap × when you’re finished.',
       panel: session.panel,
       onCode: session.onCode,
@@ -1167,8 +1280,8 @@
         <p class="threshold-status product-owned"></p>
         <div class="product-actions">
           <button type="button" class="add-button" data-p="show">Show my items</button>
-          <button type="button" class="add-button add-button-secondary" data-p="add">Add to a new trip</button>
-          <button type="button" class="add-button add-button-secondary" data-p="add-loose">Add without a trip</button>
+          <button type="button" class="add-button add-button-secondary" data-p="add">Add to a new haul</button>
+          <button type="button" class="add-button add-button-secondary" data-p="add-loose">Add without a haul</button>
           <button type="button" class="ghost-button" data-p="again">Scan another</button>
         </div>
       </div>
@@ -1238,9 +1351,10 @@
           }
           const it = cleanItem({ haulId, qty: 1, upc: code, name, photo, unitRetail: known ? known.unitRetail : 0 });
           data.items.push(it);
+          if (!haulId) { save(); openItemEditor(it, true); return; }
           openHauls.add(haulId);
           openItems.add(it.id);
-          filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
+          viewFilter.trips = 'all';
           searchInput.value = '';
           save();
           setView('trips');
@@ -1261,8 +1375,8 @@
   const ADD_HINT = 'Scan each item. Use + for more than one of the same thing. Tap × when you’re finished.';
   const SCAN_MODES = {
     lookup: ['Look up a product', 'Scan any product to see what it is and whether you have it.'],
-    add: ['Add to a new trip', ADD_HINT],
-    loose: ['Add without a trip', ADD_HINT],
+    add: ['Add to a new haul', ADD_HINT],
+    loose: ['Add without a haul', ADD_HINT],
   };
 
   function scanFromSearch(startMode) {
@@ -1293,8 +1407,8 @@
         <label class="segment"><input type="radio" name="scan-mode" value="add"><span>Add</span></label>
       </div>
       <div class="filter-chips scan-into" role="radiogroup" aria-label="Add to">
-        <label class="filter-chip"><input type="radio" name="scan-into" value="trip"><span>New trip</span></label>
-        <label class="filter-chip"><input type="radio" name="scan-into" value="none"><span>No trip</span></label>
+        <label class="filter-chip"><input type="radio" name="scan-into" value="trip"><span>New haul</span></label>
+        <label class="filter-chip"><input type="radio" name="scan-into" value="none"><span>No haul</span></label>
       </div>
     `;
     const intoRow = $('.scan-into', top);
@@ -1337,10 +1451,15 @@
           render();
         }
         if (!found && session.count() && (addedLoose || (haulId && itemsOf(haulId).length))) {
-          filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
           searchInput.value = '';
-          setView('trips');
-          showHaul(haulId && itemsOf(haulId).length ? haulId : '');
+          if (haulId && itemsOf(haulId).length) {
+            viewFilter.trips = 'all';
+            setView('trips');
+            showHaul(haulId);
+          } else {
+            setView('inventory');
+            showInvMessage('Added to your Inventory.', 'met');
+          }
         }
       },
     });
@@ -1360,7 +1479,7 @@
       const it = cleanItem({ ...line, haulId: haul.id });
       if (it) data.items.push(it);
     });
-    filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
+    viewFilter.trips = 'all';
     searchInput.value = '';
     save();
     setView('trips');
@@ -1465,7 +1584,7 @@
     else { img.dataset.photoId = photo; showPhotos(photoDialog); }
     $('.photo-source', photoDialog).textContent = IMAGE_RE.test(photo)
       ? 'From the free product database. Take your own to replace it.'
-      : items.length > 1 ? `Your photo · used for all ${items.length} trips of this item.` : 'Your photo.';
+      : items.length > 1 ? `Your photo · used for all ${items.length} hauls of this item.` : 'Your photo.';
     $$('[data-ph]', photoDialog).forEach((btn) => {
       btn.onclick = () => {
         photoDialog.close();
@@ -1699,7 +1818,7 @@
       // Closing this without choosing cancels the connect, rather than
       // silently overwriting either side.
       const describe = (trips, hasBuild) => [
-        trips ? `${trips} trip${trips === 1 ? '' : 's'}` : '',
+        trips ? `${trips} haul${trips === 1 ? '' : 's'}` : '',
         hasBuild ? 'calculator scenarios' : '',
       ].filter(Boolean).join(' and ');
       const choice = await window.appChoose({
