@@ -406,6 +406,13 @@
         </button>
         <div class="haul-body"${open ? '' : ' hidden'}>${head}
           <div class="haul-items">${items.map((it) => itemHTML(it)).join('')}</div>
+          <div class="haul-receipt">
+            <div class="haul-receipt-row">
+              <label><span class="field-label">Receipt total (with tax)</span><input type="number" class="haul-receipt-total" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></label>
+              <button type="button" class="add-button add-button-secondary" data-action="spread-tax">Spread tax</button>
+            </div>
+            <p class="haul-receipt-note">Type each item’s price from the receipt, before tax, as its Paid total. Then enter the receipt’s total here and the tax is split across the items.</p>
+          </div>
           <div class="haul-add">
             <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
             <button type="button" class="add-button add-button-secondary" data-action="scan-items">Scan items</button>
@@ -829,6 +836,8 @@
     if (f === 'qty') it.qty = Math.max(1, Math.round(num(el.value) || 1));
     else if (f === 'soldQty') it.soldQty = Math.max(0, Math.round(num(el.value)));
     else if (NUMBER_FIELDS.has(f)) it[f] = cleanMoney(el.value);
+    // Tax is part of what was paid, so it can't be more than the total.
+    if (f === 'totalPaid') it.taxPaid = Math.min(it.taxPaid, it.totalPaid);
     else if (f === 'soldDate') it.soldDate = DATE_RE.test(el.value) ? el.value : '';
     else if (f === 'upc') it.upc = cleanUpc(el.value);
     else it[f] = cleanText(el.value);
@@ -899,6 +908,8 @@
       save();
       render();
       focusItem(it.id);
+    } else if (btn.dataset.action === 'spread-tax') {
+      spreadTax(haulId, haulEl);
     } else if (btn.dataset.action === 'scan-items') {
       scanIntoHaul(haulId);
     } else if (btn.dataset.action === 'delete-haul') {
@@ -916,6 +927,44 @@
       itemAction(btn, e);
     }
   });
+
+  // Shares a receipt's tax across a haul's items by price, so each item's
+  // Paid total ends up with its tax in it and they add up to the receipt.
+  // Works from each item's price before tax, so it can be run again with a
+  // corrected total without adding tax twice.
+  function spreadTax(haulId, haulEl) {
+    const items = itemsOf(haulId);
+    const total = cleanMoney($('.haul-receipt-total', haulEl).value);
+    const bases = items.map((it) => round2(it.totalPaid - it.taxPaid));
+    const subtotal = round2(bases.reduce((s, b) => s + b, 0));
+    const note = (text, tone = '') => {
+      const el = $(`.haul[data-haul="${CSS.escape(haulId)}"] .haul-receipt-note`);
+      if (el) { el.textContent = text; el.className = `haul-receipt-note ${tone}`; }
+    };
+    if (!total || !subtotal) {
+      note('Enter each item’s Paid total and the receipt total first.', 'bad');
+      return;
+    }
+    const tax = round2(total - subtotal);
+    if (tax < 0) {
+      note(`Your items add up to ${money(subtotal)} before tax, which is more than the receipt total. Check that each Paid total is the price before tax.`, 'bad');
+      return;
+    }
+    items.forEach((it, n) => {
+      it.taxPaid = round2(tax * (bases[n] / subtotal));
+      it.totalPaid = round2(bases[n] + it.taxPaid);
+    });
+    // Rounding pennies land on the priciest item so the haul matches the receipt.
+    const off = round2(tax - items.reduce((s, it) => s + it.taxPaid, 0));
+    if (off) {
+      const top = items.reduce((a, b, n) => (bases[n] > bases[items.indexOf(a)] ? b : a), items[0]);
+      top.taxPaid = round2(top.taxPaid + off);
+      top.totalPaid = round2(top.totalPaid + off);
+    }
+    save();
+    render();
+    note(`Added ${money(tax)} tax across ${items.length} item${items.length === 1 ? '' : 's'}. Paid totals now include tax and add up to ${money(total)}.`, 'good');
+  }
 
   // ---------- Item pop-up ----------
   // Full details for one item, opened from Inventory or "+ Single item".

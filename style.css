@@ -1225,6 +1225,13 @@ select:focus, input:focus {
 }
 .haul-add { display: flex; gap: 10px; }
 .haul-add .add-button { flex: 1; }
+.haul-receipt { margin-bottom: 12px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.haul-receipt-row { display: flex; gap: 10px; align-items: flex-end; }
+.haul-receipt-row label { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.haul-receipt-row .add-button { width: auto; flex: none; margin: 0; padding: 10px 16px; }
+.haul-receipt-note { margin: 8px 0 0; font-size: 0.8rem; color: var(--muted); }
+.haul-receipt-note.good { color: var(--cash); font-weight: 600; }
+.haul-receipt-note.bad { color: var(--alert); font-weight: 600; }
 
 /* ---------- Barcode scanner ---------- */
 .scan-dialog {
