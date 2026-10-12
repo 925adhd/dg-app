@@ -1251,6 +1251,8 @@ select:focus, input:focus {
   cursor: pointer;
 }
 .scan-qty button:hover { background: var(--tag-bg); }
+.scan-qty .scan-remove { margin-left: 4px; color: var(--alert); }
+.scan-qty .scan-remove:hover { background: var(--alert-bg); }
 .scan-qty-n { min-width: 2ch; text-align: center; font-family: var(--font-tape); font-weight: 600; }
 .product-card { display: flex; gap: 14px; align-items: flex-start; }
 .product-img {

@@ -895,6 +895,7 @@
               <button type="button" data-step="-1" aria-label="One less">&minus;</button>
               <span class="scan-qty-n">${it.qty}</span>
               <button type="button" data-step="1" aria-label="One more">+</button>
+              <button type="button" class="scan-remove" data-step="remove" aria-label="Remove from this scan">&times;</button>
             </span>
           </li>`).join('')}
         </ul>` : '';
@@ -907,7 +908,14 @@
       const it = data.items.find((i) => i.id === id);
       if (!it) return;
       const before = scanned.get(id);
-      if (btn.dataset.step === '1') {
+      if (btn.dataset.step === 'remove') {
+        // Undo everything this scan added: a new item goes away, an item the
+        // trip already had goes back to its old count.
+        if (before === 0) data.items = data.items.filter((i) => i !== it);
+        else it.qty = before;
+        scanned.delete(id);
+        window.setScannerStatus(`Removed ${it.name || `barcode ${it.upc}`}.`);
+      } else if (btn.dataset.step === '1') {
         it.qty += 1;
       } else if (it.qty > Math.max(1, before)) {
         it.qty -= 1;

@@ -232,6 +232,8 @@
     hintEl.textContent = hint;
   };
 
+  window.setScannerStatus = (text, tone) => { if (dialog) setStatus(text, tone); };
+
   window.openScanner = async (opts) => {
     if (!dialog) build();
     if (dialog.open) dialog.close();
