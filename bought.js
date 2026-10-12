@@ -177,6 +177,7 @@
 
   function save() {
     persist();
+    noteLocalChanges();
     scheduleSync();
     schedulePhotoCleanup();
   }
@@ -763,7 +764,7 @@
     try { localStorage.setItem(PRICING_KEY, JSON.stringify(pricing)); } catch (e) { /* storage unavailable */ }
     renderPricingStatus();
     render();
-    if (!pulled) calcEdited = true;
+    noteLocalChanges();
     scheduleSync();
   }
 
@@ -1731,22 +1732,21 @@
   }
 
   let sync = loadSync();
-  // Nothing is pushed until a pull has succeeded, so a fresh device (or one
-  // that couldn't reach the sheet) never overwrites the sheet with stale data.
+  // Every sync pulls the sheet first and merges it in before pushing, so a
+  // device never overwrites what another one saved.
   let pulled = false;
   let syncTimer = null;
-  let pushing = false;
-  let pushAgain = false;
+  let syncing = false;
+  let syncAgain = false;
 
   // ---------- Calculator build ----------
   // The calculator (script.js) owns its working copy and saved scenarios;
   // the sync just carries them to and from the sheet's "Calculator" tab as
-  // one JSON string. Booth pricing rides along in the same string.
+  // one JSON string. Booth pricing and the merge times below ride along in
+  // the same string.
   const calc = window.calcSync;
-  // Changed here before the first pull finished, so it beats the sheet's copy.
-  let calcEdited = false;
   document.addEventListener('calc:change', () => {
-    if (!pulled) calcEdited = true;
+    noteLocalChanges();
     scheduleSync();
   });
 
@@ -1758,18 +1758,177 @@
     } catch (e) { return null; }
   }
 
-  // Skips the reload when nothing changed, so the page doesn't jump.
-  function loadBuild({ pricing: remotePricing, ...build }) {
-    if (remotePricing && typeof remotePricing === 'object') loadPricing(remotePricing);
-    if (JSON.stringify(calc.get()) !== JSON.stringify(build)) calc.load(build);
+  // ---------- Merging, one record at a time ----------
+  // Each haul, item and saved scenario — plus the calculator's working copy
+  // and booth pricing — remembers when it last changed on this device. A sync
+  // keeps whichever side changed each one most recently, and deleted ones
+  // are remembered so another device can't bring them back.
+  const META_KEY = 'therealtotal:sync-meta';
+  const BUILD_KEY = '~build';
+  const PRICING_KEY_SYNC = '~pricing';
+  const META_KEY_RE = /^(?:[his]:[A-Za-z0-9_-]{1,40}|~build|~pricing)$/;
+  // Long enough for every device to have synced since.
+  const FORGET_DELETED_MS = 90 * 24 * 60 * 60 * 1000;
+
+  function cleanTimes(raw) {
+    const out = {};
+    if (raw && typeof raw === 'object') {
+      Object.entries(raw).slice(0, 3 * MAX_ROWS).forEach(([k, t]) => {
+        if (META_KEY_RE.test(k) && Number.isFinite(t) && t > 0) out[k] = t;
+      });
+    }
+    return out;
   }
 
-  // One side's calculator with the other side's saved scenarios added, so
-  // connecting a device never throws a saved scenario away.
-  function withScenarios(base, other) {
-    const mine = Array.isArray(base.scenarios) ? base.scenarios : [];
-    const theirs = Array.isArray(other.scenarios) ? other.scenarios : [];
-    return { ...base, scenarios: [...mine, ...theirs.filter((sc) => !mine.some((m) => m.id === sc.id))] };
+  function cleanSeen(raw) {
+    const out = {};
+    if (raw && typeof raw === 'object') {
+      Object.entries(raw).forEach(([k, f]) => { if (META_KEY_RE.test(k) && typeof f === 'string') out[k] = f; });
+    }
+    return out;
+  }
+
+  // A short fingerprint of a record, to notice when it changes.
+  function fingerprint(value) {
+    const s = JSON.stringify(value);
+    let h1 = 0xdeadbeef;
+    let h2 = 0x41c6ce57;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 2654435761);
+      h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  }
+
+  // Every synced record on this device, by key.
+  function localRecords() {
+    const out = new Map();
+    const c = calc.get();
+    data.hauls.forEach((h) => out.set(`h:${h.id}`, h));
+    data.items.forEach((it) => out.set(`i:${it.id}`, it));
+    c.scenarios.forEach((sc) => out.set(`s:${sc.id}`, sc));
+    out.set(BUILD_KEY, c.build);
+    out.set(PRICING_KEY_SYNC, pricing);
+    return out;
+  }
+
+  // Marks everything as it is now as already seen, without counting it as
+  // changed. Also forgets times for records that are gone, and deletions
+  // old enough that every device has caught up.
+  function markSeen() {
+    const records = localRecords();
+    meta.seen = {};
+    records.forEach((rec, k) => { meta.seen[k] = fingerprint(rec); });
+    Object.keys(meta.stamps).forEach((k) => { if (!records.has(k)) delete meta.stamps[k]; });
+    const cutoff = Date.now() - FORGET_DELETED_MS;
+    Object.keys(meta.deleted).forEach((k) => { if (meta.deleted[k] < cutoff || records.has(k)) delete meta.deleted[k]; });
+    saveMeta();
+  }
+
+  function saveMeta() {
+    try { localStorage.setItem(META_KEY, JSON.stringify(meta)); } catch (e) { /* storage unavailable */ }
+  }
+
+  let meta = null;
+  try {
+    const m = JSON.parse(localStorage.getItem(META_KEY));
+    if (m && typeof m === 'object') meta = { stamps: cleanTimes(m.stamps), deleted: cleanTimes(m.deleted), seen: cleanSeen(m.seen) };
+  } catch (e) { meta = null; }
+  // First run: what's here already has no change time, so on a tie with
+  // the sheet the sheet's copy is kept, as before.
+  if (!meta) {
+    meta = { stamps: {}, deleted: {}, seen: {} };
+    markSeen();
+  }
+
+  // Stamps whatever changed since last time; called on every edit.
+  function noteLocalChanges() {
+    const now = Date.now();
+    const records = localRecords();
+    let changed = false;
+    records.forEach((rec, k) => {
+      const f = fingerprint(rec);
+      if (meta.seen[k] === f) return;
+      meta.seen[k] = f;
+      meta.stamps[k] = now;
+      delete meta.deleted[k];
+      changed = true;
+    });
+    Object.keys(meta.seen).forEach((k) => {
+      if (records.has(k)) return;
+      delete meta.seen[k];
+      delete meta.stamps[k];
+      meta.deleted[k] = now;
+      changed = true;
+    });
+    if (changed) saveMeta();
+  }
+
+  // Combines this device with what the sheet sent, applies it here, and
+  // says whether the sheet needs the result.
+  function mergeWithSheet(body) {
+    const remoteData = cleanData(body);
+    const build = remoteBuild(body) || {};
+    const remoteMeta = build.sync && typeof build.sync === 'object' ? build.sync : {};
+    const remoteStamps = cleanTimes(remoteMeta.stamps);
+    const remoteDeleted = cleanTimes(remoteMeta.deleted);
+
+    const remote = new Map();
+    remoteData.hauls.forEach((h) => remote.set(`h:${h.id}`, h));
+    remoteData.items.forEach((it) => remote.set(`i:${it.id}`, it));
+    (Array.isArray(build.scenarios) ? build.scenarios : []).forEach((sc) => {
+      if (sc && typeof sc === 'object' && validId(sc.id)) remote.set(`s:${sc.id}`, sc);
+    });
+    if (build.build && typeof build.build === 'object') remote.set(BUILD_KEY, build.build);
+    if (build.pricing && typeof build.pricing === 'object') remote.set(PRICING_KEY_SYNC, cleanPricing(build.pricing));
+
+    const local = localRecords();
+    Object.entries(remoteDeleted).forEach(([k, t]) => { if (!(meta.deleted[k] >= t)) meta.deleted[k] = t; });
+
+    let sheetBehind = !build.sync;
+    const kept = new Map();
+    const stamps = {};
+    const keys = [...local.keys(), ...[...remote.keys()].filter((k) => !local.has(k))];
+    keys.forEach((k) => {
+      const mine = local.get(k);
+      const theirs = remote.get(k);
+      const mineAt = mine ? meta.stamps[k] || 0 : -1;
+      const theirsAt = theirs ? remoteStamps[k] || 0 : -1;
+      const at = Math.max(mineAt, theirsAt, 0);
+      if (meta.deleted[k] >= at) {
+        if (theirs) sheetBehind = true;
+        return;
+      }
+      // A tie goes to the sheet, so a fix typed straight into it still
+      // comes through. The same record from either side keeps this device's
+      // copy, so open editors aren't disturbed.
+      const same = mine && theirs && fingerprint(mine) === fingerprint(theirs);
+      kept.set(k, theirsAt >= mineAt && !same ? theirs : mine);
+      if (!theirs || (!same && mineAt > theirsAt)) sheetBehind = true;
+      if (at) stamps[k] = at;
+    });
+
+    // Apply it here.
+    const pick = (prefix) => [...kept].filter(([k]) => k.startsWith(prefix)).map(([, v]) => v);
+    const hauls = pick('h:');
+    const haulIds = new Set(hauls.map((h) => h.id));
+    const items = pick('i:').filter((it) => it.haulId === '' || haulIds.has(it.haulId));
+    if (fingerprint(data) !== fingerprint({ hauls, items })) {
+      data = { hauls, items };
+      persist();
+      render();
+    }
+    if (kept.has(PRICING_KEY_SYNC)) loadPricing(kept.get(PRICING_KEY_SYNC));
+    const nextCalc = { build: kept.get(BUILD_KEY) || calc.get().build, scenarios: pick('s:') };
+    if (fingerprint(calc.get()) !== fingerprint(nextCalc)) calc.load(nextCalc);
+
+    meta.stamps = stamps;
+    markSeen();
+    const sorted = (o) => JSON.stringify(Object.entries(o).sort());
+    return sheetBehind || sorted(meta.stamps) !== sorted(remoteStamps) || sorted(meta.deleted) !== sorted(remoteDeleted);
   }
 
   function setSyncStatus(state, text) {
@@ -1826,64 +1985,47 @@
         const c = itemCalc(it);
         return { ...it, unitCost: r2(c.unitCost), status: STATUS_LABELS[c.status], profit: r2(c.profit) };
       }),
-      calc: JSON.stringify({ ...calc.get(), pricing }),
+      calc: JSON.stringify({ ...calc.get(), pricing, sync: { stamps: meta.stamps, deleted: meta.deleted } }),
     };
   }
 
   const syncedText = () => `Synced ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 
-  async function pull() {
+  // Pull, merge, and push back only if the sheet is missing something.
+  async function syncNow() {
+    if (!sync) return;
+    if (syncing) { syncAgain = true; return; }
+    syncing = true;
+    clearTimeout(syncTimer);
     setSyncStatus('busy', 'Syncing…');
+    const first = !pulled;
     try {
       const body = await callSheet(sync, 'pull');
-      const remote = cleanData(body);
-      const build = remoteBuild(body);
+      noteLocalChanges();
+      const needPush = mergeWithSheet(body);
       pulled = true;
-      // Whatever the sheet is missing just gets this device's copy.
-      let needPush = false;
-      if (remote.hauls.length) {
-        data = remote;
-        persist();
-        render();
-      } else if (data.hauls.length) {
-        needPush = true;
-      }
-      if (build && !calcEdited) loadBuild(build);
-      else if (build || !calc.isBlank()) needPush = true;
-      // A sheet from before pricing synced gets this device's pricing.
-      if (build && !build.pricing) needPush = true;
-      calcEdited = false;
-      if (needPush) await push();
-      else setSyncStatus('ok', syncedText());
-      syncPhotos(true);
-    } catch (err) {
-      setSyncStatus('error', `Sync error: ${err.message}`);
-    }
-  }
-
-  async function push() {
-    if (!sync || !pulled) return;
-    if (pushing) { pushAgain = true; return; }
-    pushing = true;
-    setSyncStatus('busy', 'Syncing…');
-    try {
-      await callSheet(sync, 'push', sheetRows());
+      if (needPush) await callSheet(sync, 'push', sheetRows());
       setSyncStatus('ok', syncedText());
-      syncPhotos();
+      syncPhotos(first);
     } catch (err) {
       setSyncStatus('error', `Sync error: ${err.message}`);
     } finally {
-      pushing = false;
-      if (pushAgain) { pushAgain = false; push(); }
+      syncing = false;
+      if (syncAgain) { syncAgain = false; syncNow(); }
     }
   }
 
-  // Collapses a burst of typing into one request ~1.2s after the last change.
+  // Collapses a burst of typing into one sync ~1.2s after the last change.
   function scheduleSync() {
-    if (!sync || !pulled) return;
+    if (!sync) return;
     clearTimeout(syncTimer);
-    syncTimer = setTimeout(push, 1200);
+    syncTimer = setTimeout(syncNow, 1200);
   }
+
+  // Coming back to the app picks up what another device changed meanwhile.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && sync) syncNow();
+  });
 
   $('#sync-connect').addEventListener('click', async () => {
     const url = syncUrlInput.value.trim();
@@ -1898,51 +2040,21 @@
     }
     const conn = { url, key };
     showMessage('Connecting…');
-    let body;
     try {
-      body = await callSheet(conn, 'pull');
+      await callSheet(conn, 'pull');
     } catch (err) {
       showMessage(err.message, 'unmet');
       return;
     }
-    const remote = cleanData(body);
-    const build = remoteBuild(body);
-    const deviceHasBuild = !calc.isBlank();
-    // Only remember the connection once it's proven to work.
-    let preferSheet = true;
-    if ((remote.hauls.length && data.hauls.length) || (build && deviceHasBuild)) {
-      // Closing this without choosing cancels the connect, rather than
-      // silently overwriting either side.
-      const describe = (trips, hasBuild) => [
-        trips ? `${trips} haul${trips === 1 ? '' : 's'}` : '',
-        hasBuild ? 'a calculator' : '',
-      ].filter(Boolean).join(' and ');
-      const choice = await window.appChoose({
-        title: 'Your sheet already has data',
-        message: `The sheet has ${describe(remote.hauls.length, !!build)} and this device has ${describe(data.hauls.length, deviceHasBuild)}. Which should be kept? The other one gets replaced${build && deviceHasBuild ? ', except saved scenarios — those from both are kept' : ''}.`,
-        confirmText: 'Use the sheet’s data',
-        altText: 'Keep this device’s data',
-        cancelText: 'Don’t connect',
-      });
-      if (choice === 'cancel') { showMessage('Not connected — nothing was changed.', 'unmet'); return; }
-      preferSheet = choice === 'confirm';
-    }
-    // Anything only one side has is kept either way.
-    if (remote.hauls.length && (preferSheet || !data.hauls.length)) data = remote;
-    if (build && (preferSheet || !deviceHasBuild)) loadBuild(withScenarios(build, calc.get()));
-    else if (build) loadBuild(withScenarios(calc.get(), build));
+    // Only remember the connection once it's proven to work. The first sync
+    // combines this device's data with the sheet's, keeping both.
     sync = conn;
-    pulled = true;
-    calcEdited = false;
     try { localStorage.setItem(SYNC_KEY, JSON.stringify(conn)); } catch (e) { /* storage unavailable */ }
     syncUrlInput.value = '';
     syncKeyInput.value = '';
     showMessage('');
-    persist();
-    render();
     renderSyncPanel();
-    await push();
-    syncPhotos(true);
+    await syncNow();
   });
 
   $('#sync-generate').addEventListener('click', async () => {
@@ -1973,8 +2085,7 @@
   $('#sync-copy-update').addEventListener('click', () => copyScript('Script copied. Paste it over the old code in Apps Script, then deploy a new version (steps 2 and 3).'));
 
   $('#sync-now').addEventListener('click', () => {
-    clearTimeout(syncTimer);
-    if (pulled) push(); else pull();
+    syncNow();
   });
 
   $('#sync-disconnect').addEventListener('click', async () => {
@@ -2000,5 +2111,5 @@
   try { startView = localStorage.getItem(VIEW_KEY) || 'trips'; } catch (e) { /* storage unavailable */ }
   setView(startView);
   renderSyncPanel();
-  if (sync) pull();
+  if (sync) syncNow();
 })();
