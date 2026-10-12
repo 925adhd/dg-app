@@ -227,6 +227,16 @@
             <button type="button" class="ghost-button" id="sync-now">Sync now</button>
             <button type="button" class="ghost-button" id="sync-disconnect">Disconnect this device</button>
           </div>
+          <div class="sync-update">
+            <p class="sync-update-title">Updating the sync script</p>
+            <p class="hint">When the app gets new features, the script in your sheet may need the new version too. Your web app URL stays the same, so nothing needs reconnecting.</p>
+            <ol class="sync-steps">
+              <li><button type="button" class="ghost-button inline-button" id="sync-copy-update">Copy the script</button>
+                or <a href="google-sheet-sync/Code.gs" target="_blank" rel="noopener">open it here</a>.</li>
+              <li>In your sheet, open <strong>Extensions → Apps Script</strong>, select all the old code and paste over it.</li>
+              <li>Click <strong>Deploy → Manage deployments</strong>, tap the pencil (Edit), set <em>Version</em> to <strong>New version</strong>, then <strong>Deploy</strong>.</li>
+            </ol>
+          </div>
         </div>
 
         <p class="threshold-status" id="sync-message" hidden></p>

@@ -1743,16 +1743,18 @@
     }
   });
 
-  $('#sync-copy-script').addEventListener('click', async () => {
+  async function copyScript(done) {
     try {
       const res = await fetch('google-sheet-sync/Code.gs', { cache: 'no-store' });
       if (!res.ok) throw new Error();
       await navigator.clipboard.writeText(await res.text());
-      showMessage('Script copied. Paste it into Apps Script (step 3).', 'met');
+      showMessage(done, 'met');
     } catch (e) {
       showMessage('Couldn’t copy automatically — use the “open it here” link instead.', 'unmet');
     }
-  });
+  }
+  $('#sync-copy-script').addEventListener('click', () => copyScript('Script copied. Paste it into Apps Script (step 3).'));
+  $('#sync-copy-update').addEventListener('click', () => copyScript('Script copied. Paste it over the old code in Apps Script, then deploy a new version (steps 2 and 3).'));
 
   $('#sync-now').addEventListener('click', () => {
     clearTimeout(syncTimer);
