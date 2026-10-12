@@ -141,6 +141,7 @@
     dollar: 'Buy X Get Y at $ off',
     bundle: 'X for $ (bundle price)',
     flat: 'Buy X, Save $ flat',
+    group: 'Any X items (mixed)',
   };
 
   const emptyDeal = () => ({ type: 'none', x: 1, y: 1, amt: 0 });
@@ -192,6 +193,23 @@
         return `
           <label class="mini-field"><span>Buy</span><input type="number" class="${cx}" min="1" step="1" value="${x}"></label>
           <label class="mini-field"><span>Save $</span><input type="number" class="${ca}" min="0" step="0.01" placeholder="5.00" value="${amt}"></label>
+        `;
+      // A coupon shared by different items ("Save $2 on any 2 Clorox"). The
+      // math lives in a "buy any X items" spend & save deal; this just picks
+      // or creates that deal and links the item to it. syncGroupDealUI fills
+      // in the choices and the linked deal's values.
+      case 'group':
+        return `
+          <div class="group-deal" data-slot="${slot}" data-group-id="${escapeAttr(v.groupId || '')}">
+            <label class="mini-field group-pick"><span>Coupon</span><select class="f-group-${slot}"></select></label>
+            <div class="group-fields" hidden>
+              <label class="mini-field group-name"><span>Name</span><input type="text" class="g-name" placeholder="e.g. Clorox"></label>
+              <label class="mini-field"><span>Save $</span><input type="number" class="g-amt" min="0" step="0.01" placeholder="2.00"></label>
+              <label class="mini-field"><span>on any</span><input type="number" class="g-count" min="1" step="1" placeholder="2"></label>
+              <span class="deal-word">items</span>
+            </div>
+            <p class="group-note" hidden></p>
+          </div>
         `;
       default:
         return '';
@@ -317,6 +335,8 @@
     const row = document.createElement('div');
     row.className = 'spend-row';
     row.dataset.id = spendCounter;
+    // Stable id so items can link to this deal from their coupon dropdowns.
+    row.dataset.uid = data.uid || newUid();
     row.dataset.selected = JSON.stringify(Array.isArray(data.items) ? data.items : []);
     const kind = SPEND_KINDS[data.kind] ? data.kind : 'dg';
     const split = data.split === 'even' ? 'even' : 'price';
@@ -395,27 +415,103 @@
     $('.s-repeat-text', row).textContent = repeatText(mode);
   });
 
+  // Which items each spend & save deal is linked to from the items' own
+  // "Any X items (mixed)" coupon dropdowns, keyed by the deal's uid.
+  function groupLinks() {
+    const links = new Map();
+    $$('.item-row').forEach((row) => {
+      DEAL_SLOTS.forEach((slot) => {
+        const deal = readDealSlot(row, slot.key);
+        if (deal.type !== 'group' || !deal.groupId) return;
+        if (!links.has(deal.groupId)) links.set(deal.groupId, new Set());
+        links.get(deal.groupId).add(row.dataset.uid);
+      });
+    });
+    return links;
+  }
+
   // Keep each deal's item checklist in step with the item rows, preserving
   // which items were ticked. Only rebuilds when the item list actually changed.
+  // Items linked from their own coupon dropdown show as ticked and locked.
   function syncSpendChips() {
     const itemRows = $$('.item-row');
+    const links = groupLinks();
     const signature = itemRows.map((r, i) => r.dataset.uid + ':' + ($('.item-name', r).value.trim() || `Item ${i + 1}`) + (r.classList.contains('is-hidden') ? ':hidden' : '')).join('|');
     $$('.spend-row', spendList).forEach((row) => {
       const container = $('.s-items', row);
-      if (container.dataset.sig === signature) return;
+      const linked = links.get(row.dataset.uid) || new Set();
+      const sig = signature + '#' + Array.from(linked).join(',');
+      if (container.dataset.sig === sig) return;
       const selected = new Set(container.dataset.sig === undefined
         ? JSON.parse(row.dataset.selected || '[]')
-        : $$('input:checked', container).map((c) => c.value));
-      container.dataset.sig = signature;
+        : $$('input:checked:not(:disabled)', container).map((c) => c.value));
+      container.dataset.sig = sig;
       container.innerHTML = itemRows.length
         ? itemRows.map((r, i) => {
             const uid = r.dataset.uid;
             const name = $('.item-name', r).value.trim() || `Item ${i + 1}`;
             const hidden = r.classList.contains('is-hidden');
-            return `<label class="check-chip${hidden ? ' chip-hidden' : ''}"${hidden ? ' title="Hidden from the total"' : ''}><input type="checkbox" value="${uid}" ${selected.has(uid) ? 'checked' : ''}><span>${escapeHtml(name)}</span></label>`;
+            const isLinked = linked.has(uid);
+            const title = isLinked ? 'Linked from this item’s coupon dropdown' : hidden ? 'Hidden from the total' : '';
+            return `<label class="check-chip${hidden ? ' chip-hidden' : ''}${isLinked ? ' chip-linked' : ''}"${title ? ` title="${title}"` : ''}><input type="checkbox" value="${uid}" ${selected.has(uid) || isLinked ? 'checked' : ''} ${isLinked ? 'disabled' : ''}><span>${escapeHtml(name)}</span></label>`;
           }).join('')
         : '<span class="hint">Add items below first.</span>';
     });
+  }
+
+  // Fills each item's "Any X items (mixed)" picker with the matching deals
+  // and mirrors the chosen deal's name / amount / count into the item.
+  function syncGroupDealUI() {
+    const spendRows = $$('.spend-row', spendList);
+    $$('.group-deal', itemsList).forEach((box) => {
+      const slot = box.dataset.slot;
+      const select = $(`.f-group-${slot}`, box);
+      const choices = spendRows.filter((r) => $('.s-mode', r).value === 'qty' && $('.s-kind', r).value === slot);
+      const current = choices.find((r) => r.dataset.uid === box.dataset.groupId);
+      const label = (r) => {
+        const name = $('.spend-name', r).value.trim() || 'Unnamed coupon';
+        const count = Math.round(num($('.s-count', r).value));
+        return `${name} — $${num($('.s-amount', r).value).toFixed(2)} off any ${count || '?'}`;
+      };
+      const opts = (current ? '' : '<option value="">Choose a coupon…</option>')
+        + choices.map((r) => `<option value="${r.dataset.uid}">${escapeHtml(label(r))}</option>`).join('')
+        + '<option value="__new">+ New mixed coupon</option>';
+      if (select.dataset.opts !== opts) {
+        select.innerHTML = opts;
+        select.dataset.opts = opts;
+      }
+      select.value = current ? current.dataset.uid : '';
+      box.dataset.groupId = current ? current.dataset.uid : '';
+      $('.group-fields', box).hidden = !current;
+      if (!current) return;
+      [['.g-name', '.spend-name'], ['.g-amt', '.s-amount'], ['.g-count', '.s-count']].forEach(([mine, theirs]) => {
+        const input = $(mine, box);
+        if (document.activeElement !== input) input.value = $(theirs, current).value;
+      });
+    });
+  }
+
+  // Shows the linked deal's status ("1 of 2 items — add 1 more…") under
+  // each item that's part of it.
+  function renderGroupNotes() {
+    $$('.group-deal', itemsList).forEach((box) => {
+      const note = $('.group-note', box);
+      const deal = box.dataset.groupId && $$('.spend-row', spendList).find((r) => r.dataset.uid === box.dataset.groupId);
+      const status = deal && $('.spend-status', deal);
+      note.hidden = !status || status.hidden;
+      if (status) {
+        note.textContent = status.textContent;
+        note.className = `group-note ${status.classList.contains('met') ? 'met' : 'unmet'}`;
+      }
+    });
+  }
+
+  // Makes a new "buy any X items" deal for an item's coupon slot and links
+  // the item to it. Repeat starts off — these coupons are usually one-time.
+  function createGroupDeal(box) {
+    const row = addSpendRow({ mode: 'qty', kind: box.dataset.slot, repeat: false });
+    box.dataset.groupId = row.dataset.uid;
+    return row;
   }
 
   function readSpendDeals() {
@@ -560,6 +656,43 @@
     fieldsContainer.innerHTML = dealFieldsHTML(e.target.value, {}, slot.key);
     row.querySelector(`.deal-fields-row[data-slot="${slot.key}"]`).hidden = e.target.value === 'none';
     syncCouponFieldStates(row);
+    // Picking "Any X items (mixed)" joins the first matching coupon if one
+    // exists (the usual case for the second item), or starts a new one.
+    if (e.target.value === 'group') {
+      const box = $('.group-deal', fieldsContainer);
+      const existing = $$('.spend-row', spendList).find((r) => $('.s-mode', r).value === 'qty' && $('.s-kind', r).value === slot.key);
+      if (existing) box.dataset.groupId = existing.dataset.uid;
+      else createGroupDeal(box);
+      persistAndRender();
+      if (!existing) $('.g-name', box).focus();
+    }
+  });
+
+  // The coupon picker inside an item's "Any X items (mixed)" deal. Handles
+  // "input" too: it fires before "change", and the re-render it triggers
+  // would otherwise reset the picker before "change" ever saw the choice.
+  function onGroupPick(e) {
+    const box = e.target.closest('.group-deal');
+    if (!box || !e.target.matches(`.f-group-${box.dataset.slot}`)) return;
+    if (e.target.value === '__new') {
+      createGroupDeal(box);
+      persistAndRender();
+      $('.g-name', box).focus();
+    } else if (e.target.value) {
+      box.dataset.groupId = e.target.value;
+    }
+  }
+  itemsList.addEventListener('input', onGroupPick);
+  itemsList.addEventListener('change', onGroupPick);
+
+  // Editing the name / amount / count from an item edits the shared deal.
+  itemsList.addEventListener('input', (e) => {
+    const box = e.target.closest('.group-deal');
+    if (!box || !box.dataset.groupId) return;
+    const target = { 'g-name': '.spend-name', 'g-amt': '.s-amount', 'g-count': '.s-count' };
+    const key = Object.keys(target).find((k) => e.target.classList.contains(k));
+    const deal = key && $$('.spend-row', spendList).find((r) => r.dataset.uid === box.dataset.groupId);
+    if (deal) $(target[key], deal).value = e.target.value;
   });
 
   itemsList.addEventListener('input', persistAndRender);
@@ -598,11 +731,14 @@
     const xEl = row.querySelector(`.f-deal-x-${key}`);
     const yEl = row.querySelector(`.f-deal-y-${key}`);
     const amtEl = row.querySelector(`.f-deal-amt-${key}`);
+    const groupBox = row.querySelector(`.deal-fields-${key} .group-deal`);
+    const type = typeEl ? typeEl.value : 'none';
     return {
-      type: typeEl ? typeEl.value : 'none',
+      type,
       x: xEl ? Math.max(1, Math.round(num(xEl.value) || 1)) : 1,
       y: yEl ? Math.max(1, Math.round(num(yEl.value) || 1)) : 1,
       amt: amtEl ? num(amtEl.value) : 0,
+      ...(type === 'group' ? { groupId: (groupBox && groupBox.dataset.groupId) || '' } : {}),
     };
   }
 
@@ -630,7 +766,8 @@
 
   // Discount from a "Buy X Get Y ..." or "Buy X, Save $" deal, in dollars for the whole line.
   function computeDealDiscount(deal, unitPrice, qty, lineSale) {
-    if (!deal || deal.type === 'none' || unitPrice <= 0) return 0;
+    // A mixed-item coupon is worked out by its spend & save deal instead.
+    if (!deal || deal.type === 'none' || deal.type === 'group' || unitPrice <= 0) return 0;
 
     if (deal.type === 'flat') {
       const groupSize = Math.max(1, deal.x);
@@ -657,7 +794,7 @@
   }
 
   function dealCycles(deal, qty) {
-    if (!deal || deal.type === 'none') return 0;
+    if (!deal || deal.type === 'none' || deal.type === 'group') return 0;
     const groupSize = (deal.type === 'flat' || deal.type === 'bundle') ? Math.max(1, deal.x) : Math.max(2, deal.x + deal.y);
     return Math.floor(qty / groupSize);
   }
@@ -884,7 +1021,7 @@
         el.className = 'threshold-status spend-status met';
       } else {
         el.textContent = qty
-          ? `${d.units} of ${d.count} items — add ${more(d.count - d.units)} from the ticked products to unlock it.`
+          ? `${d.units} of ${d.count} items — add ${more(d.count - d.units).replace("more", "more qualifying")} to unlock it.`
           : `${money(d.spend)} of ${money(d.threshold)} — spend ${money(d.threshold - d.spend)} more on these items to unlock it.`;
         el.className = 'threshold-status spend-status unmet';
       }
@@ -1002,9 +1139,12 @@
       customAmount: customAmount.value,
       customThreshold: customThreshold.value,
       spendDeals: readSpendDeals().map((d) => ({
+        uid: d.el.dataset.uid,
         name: d.name, amount: $('.s-amount', d.el).value, threshold: $('.s-threshold', d.el).value,
         mode: d.mode, count: $('.s-count', d.el).value,
-        kind: d.kind, split: d.split, repeat: d.repeat, items: d.itemUids,
+        kind: d.kind, split: d.split, repeat: d.repeat,
+        // Only hand-ticked items — linked ones are restored from the item's own deal.
+        items: $$('.s-items input:checked:not(:disabled)', d.el).map((c) => c.value),
       })),
       items: readItems().map((it) => ({
         uid: it.uid, name: it.name, qty: it.qty, retail: $('.f-retail', it.el).value, sale: $('.f-sale', it.el).value,
@@ -1015,11 +1155,13 @@
   }
 
   function persistAndRender() {
+    syncGroupDealUI();
     syncSpendChips();
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState())); } catch (e) { /* storage unavailable */ }
     const result = calculate();
     renderThresholdStatus(result);
     renderSpendStatus(result);
+    renderGroupNotes();
     renderReceipt(result);
   }
 

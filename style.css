@@ -1002,3 +1002,36 @@ select:focus, input:focus {
 @media (max-width: 480px) {
   .spend-fields { grid-template-columns: 1fr; }
 }
+
+/* ---------- Mixed-item coupon (item dropdown) ---------- */
+.deal-fields-row > div:has(.group-deal) { flex: 1 1 0; min-width: 0; }
+.group-deal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  width: 100%;
+}
+.group-pick { flex: 1 1 220px; min-width: 0; }
+.group-pick select { padding: 8px; }
+.group-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.group-name input { width: 130px; }
+.group-note {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+.group-note.met { background: var(--cash-bg); color: var(--cash); }
+.group-note.unmet { background: var(--tag-bg); color: var(--tag); }
+.check-chip.chip-linked span { border-style: dashed; }
+.check-chip.chip-linked input { cursor: not-allowed; }
+.deal-fields-row:has(.group-deal) { align-items: flex-start; }
+.deal-fields-row:has(.group-deal) .deal-slot-tag { padding: 4px 0 0; }
