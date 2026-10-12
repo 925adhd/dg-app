@@ -2,7 +2,7 @@
  * The Real Total — "Bought" tab <-> Google Sheet sync backend.
  *
  * Setup:
- * 1. Create a new Google Sheet (any name). This script rewrites its own two
+ * 1. Create a new Google Sheet (any name). This script rewrites its own three
  *    tabs on every sync.
  * 2. Extensions -> Apps Script.
  * 3. Delete the default code in Code.gs and paste this whole file in.
@@ -17,9 +17,15 @@
  * 7. In The Real Total, open Bought -> Google Sheet sync, paste the URL and the
  *    same secret key, and tap Connect.
  *
- * The "Hauls" and "Items" tabs are created automatically on the first sync.
- * Columns after the editable ones (totals, profit, status) are filled in by the
- * app for easy reading — edits to those columns are ignored and overwritten.
+ * The "Hauls", "Items" and "Calculator" tabs are created automatically on the
+ * first sync. Columns after the editable ones (totals, profit, status) are
+ * filled in by the app for easy reading — edits to those columns are ignored
+ * and overwritten. "Calculator" holds the calculator and its saved scenarios
+ * as app data; don't edit it.
+ *
+ * Updating an existing sync: paste the new code over the old, then
+ * Deploy -> Manage deployments -> Edit (pencil) -> Version: New version ->
+ * Deploy. The web app URL stays the same.
  *
  * Security notes:
  * - The secret lives only in Script Properties and in your own browser, never
@@ -36,6 +42,7 @@
 
 const SHEET_HAULS = "Hauls";
 const SHEET_ITEMS = "Items";
+const SHEET_CALC = "Calculator";
 
 // Editable columns — the only ones read back into the app.
 const HAUL_COLUMNS = ["id", "date", "store", "name", "notes"];
@@ -56,6 +63,9 @@ const DATE_COLUMNS = ["date", "soldDate"];
 const MAX_ROWS = 5000;
 const MAX_TEXT = 200;
 const MAX_BODY = 2000000;
+const MAX_CALC = 1000000;
+// A cell holds at most 50,000 characters.
+const CALC_CHUNK = 40000;
 
 function getSecret() {
   const secret = PropertiesService.getScriptProperties().getProperty("SECRET");
@@ -108,7 +118,8 @@ function doPost(e) {
   if (body.action === "pull") {
     return jsonResponse({
       hauls: readSheet(ss, SHEET_HAULS, HAUL_COLUMNS),
-      items: readSheet(ss, SHEET_ITEMS, ITEM_COLUMNS)
+      items: readSheet(ss, SHEET_ITEMS, ITEM_COLUMNS),
+      calc: readCalc(ss)
     });
   }
 
@@ -119,6 +130,9 @@ function doPost(e) {
     if (body.hauls.length > MAX_ROWS || body.items.length > MAX_ROWS) {
       return jsonResponse({ error: "too many rows" });
     }
+    if (body.calc !== undefined && (typeof body.calc !== "string" || body.calc.length > MAX_CALC)) {
+      return jsonResponse({ error: "calculator data too large" });
+    }
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(10000)) {
       return jsonResponse({ error: "The sheet is busy - try again in a moment." });
@@ -126,6 +140,7 @@ function doPost(e) {
     try {
       writeSheet(ss, SHEET_HAULS, body.hauls, HAUL_COLUMNS.concat(HAUL_COMPUTED));
       writeSheet(ss, SHEET_ITEMS, body.items, ITEM_COLUMNS.concat(ITEM_COMPUTED));
+      if (typeof body.calc === "string") writeCalc(ss, body.calc);
     } finally {
       lock.releaseLock();
     }
@@ -194,6 +209,37 @@ function writeSheet(ss, name, rows, columns) {
     return columns.map(function (column) { return cellValue(safeRow[column], column); });
   });
   sheet.getRange(2, 1, data.length, columns.length).setValues(data);
+}
+
+// The calculator and its saved scenarios are one JSON string, split down column A because it can be
+// longer than one cell allows. Each piece starts with "|" so it can never be
+// taken for a formula or a number, and is never cut mid-emoji.
+function readCalc(ss) {
+  const sheet = ss.getSheetByName(SHEET_CALC);
+  if (!sheet || sheet.getLastRow() < 2) return "";
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues()
+    .map(function (row) { return String(row[0]); })
+    .filter(function (cell) { return cell.charAt(0) === "|"; })
+    .map(function (cell) { return cell.slice(1); })
+    .join("");
+}
+
+function writeCalc(ss, json) {
+  let sheet = ss.getSheetByName(SHEET_CALC);
+  if (!sheet) sheet = ss.insertSheet(SHEET_CALC);
+  sheet.clearContents();
+  sheet.getRange(1, 1).setValue("Calculator and saved scenarios from The Real Total - don't edit, it's replaced on every sync.").setFontWeight("bold");
+  if (!json) return;
+  const rows = [];
+  let start = 0;
+  while (start < json.length) {
+    let end = Math.min(start + CALC_CHUNK, json.length);
+    const last = json.charCodeAt(end - 1);
+    if (end < json.length && last >= 0xD800 && last <= 0xDBFF) end--;
+    rows.push(["|" + json.slice(start, end)]);
+    start = end;
+  }
+  sheet.getRange(2, 1, rows.length, 1).setValues(rows);
 }
 
 function jsonResponse(obj) {

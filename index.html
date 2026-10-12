@@ -38,6 +38,24 @@
     <section class="panel panel-form" aria-label="Cart setup">
 
       <div class="control-group">
+        <h2>Saved scenarios</h2>
+        <p class="hint hint-top">Save what's on the calculator under a name, then start a new one. Tap a saved scenario to bring it back.</p>
+        <div class="scenario-save">
+          <label class="field">
+            <span class="field-label">Scenario name</span>
+            <input type="text" id="scenario-name" placeholder="e.g. Tide run" maxlength="60" autocomplete="off">
+          </label>
+          <button type="button" id="scenario-save" class="add-button">Save scenario</button>
+        </div>
+        <div class="scenario-actions">
+          <button type="button" id="scenario-save-new" class="ghost-button" hidden>Save as a new scenario</button>
+          <button type="button" id="scenario-new" class="ghost-button">+ Start a new scenario</button>
+        </div>
+        <p class="threshold-status" id="scenario-status" hidden></p>
+        <ul class="scenario-list" id="scenario-list"></ul>
+      </div>
+
+      <div class="control-group">
         <h2>Tax</h2>
         <div class="field-row">
           <label class="field">
@@ -165,7 +183,7 @@
         </summary>
 
         <div id="sync-setup">
-          <p class="hint hint-top">Keep your purchases in a Google Sheet you own, so they're backed up and the same on every device.</p>
+          <p class="hint hint-top">Keep your purchases, the calculator and your saved scenarios in a Google Sheet you own, so they're backed up and the same on every device.</p>
           <ol class="sync-steps">
             <li>Make a <strong>new</strong> Google Sheet.</li>
             <li>In the sheet, open <strong>Extensions → Apps Script</strong>.</li>

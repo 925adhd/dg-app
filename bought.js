@@ -5,7 +5,8 @@
   // Every saved receipt becomes a haul (one shopping trip) holding its items.
   // Each item tracks what it cost, what it's worth at retail, what you plan to
   // resell it for, and what it actually sold for — so profit adds itself up.
-  // Optionally mirrors everything to a Google Sheet you own (see
+  // Optionally mirrors everything, plus the calculator and its saved
+  // scenarios, to a Google Sheet you own (see
   // google-sheet-sync/Code.gs). The sheet link and secret key are stored only
   // in this browser — never in the code — because this repo is public.
 
@@ -777,6 +778,36 @@
   let pushing = false;
   let pushAgain = false;
 
+  // ---------- Calculator build ----------
+  // The calculator (script.js) owns its working copy and saved scenarios;
+  // the sync just carries them to and from the sheet's "Calculator" tab as
+  // one JSON string.
+  const calc = window.calcSync;
+  // Changed here before the first pull finished, so it beats the sheet's copy.
+  let calcEdited = false;
+  document.addEventListener('calc:change', () => {
+    if (!pulled) calcEdited = true;
+    scheduleSync();
+  });
+
+  function remoteBuild(body) {
+    if (typeof body.calc !== 'string' || !body.calc) return null;
+    try {
+      const build = JSON.parse(body.calc);
+      return build && typeof build === 'object' ? build : null;
+    } catch (e) { return null; }
+  }
+
+  // Skips the reload when nothing changed, so the page doesn't jump.
+  function loadBuild(build) {
+    if (JSON.stringify(calc.get()) !== JSON.stringify(build)) calc.load(build);
+  }
+
+  // Older copies of the sheet script only know about purchases.
+  function noteScriptVersion(body) {
+    showMessage(!('calc' in body) ? 'Your purchases sync, but the calculator and saved scenarios don’t yet. To sync them too, paste the latest sync script into Apps Script, then Deploy → Manage deployments → Edit → New version → Deploy.' : '');
+  }
+
   function setSyncStatus(state, text) {
     syncStatusEl.textContent = text;
     syncStatusEl.className = `sync-status ${state}`;
@@ -831,6 +862,7 @@
         const c = itemCalc(it);
         return { ...it, unitCost: r2(c.unitCost), status: STATUS_LABELS[c.status], profit: r2(c.profit) };
       }),
+      calc: JSON.stringify(calc.get()),
     };
   }
 
@@ -839,19 +871,25 @@
   async function pull() {
     setSyncStatus('busy', 'Syncing…');
     try {
-      const remote = cleanData(await callSheet(sync, 'pull'));
+      const body = await callSheet(sync, 'pull');
+      const remote = cleanData(body);
+      const build = remoteBuild(body);
+      noteScriptVersion(body);
       pulled = true;
+      // Whatever the sheet is missing just gets this device's copy.
+      let needPush = false;
       if (remote.hauls.length) {
         data = remote;
         persist();
         render();
-        setSyncStatus('ok', syncedText());
       } else if (data.hauls.length) {
-        // An empty sheet just gets this device's data.
-        await push();
-      } else {
-        setSyncStatus('ok', syncedText());
+        needPush = true;
       }
+      if (build && !calcEdited) loadBuild(build);
+      else if (build || !calc.isBlank()) needPush = true;
+      calcEdited = false;
+      if (needPush) await push();
+      else setSyncStatus('ok', syncedText());
     } catch (err) {
       setSyncStatus('error', `Sync error: ${err.message}`);
     }
@@ -893,35 +931,45 @@
     }
     const conn = { url, key };
     showMessage('Connecting…');
-    let remote;
+    let body;
     try {
-      remote = cleanData(await callSheet(conn, 'pull'));
+      body = await callSheet(conn, 'pull');
     } catch (err) {
       showMessage(err.message, 'unmet');
       return;
     }
+    const remote = cleanData(body);
+    const build = remoteBuild(body);
+    const deviceHasBuild = !calc.isBlank();
     // Only remember the connection once it's proven to work.
-    if (remote.hauls.length && data.hauls.length) {
+    let preferSheet = true;
+    if ((remote.hauls.length && data.hauls.length) || (build && deviceHasBuild)) {
       // Closing this without choosing cancels the connect, rather than
       // silently overwriting either side.
+      const describe = (trips, hasBuild) => [
+        trips ? `${trips} trip${trips === 1 ? '' : 's'}` : '',
+        hasBuild ? 'calculator scenarios' : '',
+      ].filter(Boolean).join(' and ');
       const choice = await window.appChoose({
         title: 'Your sheet already has data',
-        message: `The sheet has ${remote.hauls.length} trip${remote.hauls.length === 1 ? '' : 's'} and this device has ${data.hauls.length}. Which should be kept? The other one gets replaced.`,
+        message: `The sheet has ${describe(remote.hauls.length, !!build)} and this device has ${describe(data.hauls.length, deviceHasBuild)}. Which should be kept? The other one gets replaced.`,
         confirmText: 'Use the sheet’s data',
         altText: 'Keep this device’s data',
         cancelText: 'Don’t connect',
       });
       if (choice === 'cancel') { showMessage('Not connected — nothing was changed.', 'unmet'); return; }
-      if (choice === 'confirm') data = remote;
-    } else if (remote.hauls.length) {
-      data = remote;
+      preferSheet = choice === 'confirm';
     }
+    // Anything only one side has is kept either way.
+    if (remote.hauls.length && (preferSheet || !data.hauls.length)) data = remote;
+    if (build && (preferSheet || !deviceHasBuild)) loadBuild(build);
     sync = conn;
     pulled = true;
+    calcEdited = false;
     try { localStorage.setItem(SYNC_KEY, JSON.stringify(conn)); } catch (e) { /* storage unavailable */ }
     syncUrlInput.value = '';
     syncKeyInput.value = '';
-    showMessage('');
+    noteScriptVersion(body);
     persist();
     render();
     renderSyncPanel();
@@ -961,13 +1009,14 @@
   $('#sync-disconnect').addEventListener('click', async () => {
     if (!await window.appConfirm({
       title: 'Disconnect this device?',
-      message: 'Your purchases stay on this device and in the sheet; they just stop syncing here.',
+      message: 'Your purchases and scenarios stay on this device and in the sheet; they just stop syncing here.',
       confirmText: 'Disconnect', cancelText: 'Stay connected',
     })) return;
     try { localStorage.removeItem(SYNC_KEY); } catch (e) { /* storage unavailable */ }
     sync = null;
     pulled = false;
     clearTimeout(syncTimer);
+    showMessage('');
     renderSyncPanel();
   });
 

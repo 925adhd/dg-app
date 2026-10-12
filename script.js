@@ -641,6 +641,7 @@
       confirmText: 'Clear everything', cancelText: 'Keep', danger: true,
     })) return;
     localStorage.removeItem(STORAGE_KEY);
+    setActiveScenario(null);
     itemsList.innerHTML = '';
     spendList.innerHTML = '';
     addItemRow();
@@ -720,6 +721,7 @@
       message: 'Clear the calculator for your next trip?',
       confirmText: 'Clear calculator', cancelText: 'Keep it',
     })) return;
+    setActiveScenario(null);
     itemsList.innerHTML = '';
     spendList.innerHTML = '';
     addItemRow();
@@ -1162,50 +1164,344 @@
     };
   }
 
-  function persistAndRender() {
+  // `notify` is false only when a build is loaded from the Google Sheet, so
+  // that load isn't pushed straight back. (Event listeners pass an Event.)
+  function persistAndRender(notify = true) {
     syncGroupDealUI();
     syncSpendChips();
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState())); } catch (e) { /* storage unavailable */ }
+    if (notify !== false) document.dispatchEvent(new CustomEvent('calc:change'));
     const result = calculate();
+    renderScenarioFlag();
     renderThresholdStatus(result);
     renderSpendStatus(result);
     renderGroupNotes();
     renderReceipt(result);
   }
 
-  function restoreState() {
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) { saved = null; }
+  // ---------- Saved-build cleaning ----------
+  // A saved build can come back from a Google Sheet, so every value is checked
+  // before it reaches the row templates, some of which insert values as-is.
+  const UID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+  const MAX_SAVED_TEXT = 200;
+  const MAX_SAVED_ROWS = 500;
+  const hasKey = (obj, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(obj, k);
+  const cleanUid = (v) => (typeof v === 'string' && UID_RE.test(v) ? v : undefined);
+  const cleanName = (v) => (typeof v === 'string' ? v.slice(0, MAX_SAVED_TEXT) : '');
+  // Number boxes are saved as the text typed in them; anything else is blanked.
+  const cleanNumText = (v) => {
+    if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+    return typeof v === 'string' && /^-?\d{0,9}(\.\d{0,6})?$/.test(v.trim()) ? v.trim() : '';
+  };
+  const cleanCount = (v, fallback) => { const n = Math.round(num(v)); return n >= 1 && n < 1e6 ? n : fallback; };
 
-    if (!saved) {
-      stateSelect.value = 'KY';
-      stateSelect.dispatchEvent(new Event('change'));
-      addItemRow();
-      addItemRow();
-      return;
-    }
+  function cleanDeal(d) {
+    if (!d || typeof d !== 'object' || !hasKey(DEAL_LABELS, d.type)) return emptyDeal();
+    const deal = { type: d.type, x: cleanCount(d.x, 1), y: cleanCount(d.y, 1), amt: Math.max(0, num(d.amt)) };
+    if (d.type === 'group') deal.groupId = cleanUid(d.groupId) || '';
+    return deal;
+  }
 
-    stateSelect.value = saved.state || 'KY';
+  function cleanSaved(s) {
+    if (!s || typeof s !== 'object') return null;
+    const rows = (v) => (Array.isArray(v) ? v.slice(0, MAX_SAVED_ROWS) : []).filter((r) => r && typeof r === 'object');
+    const seen = new Set();
+    const uniqueUid = (v) => { const uid = cleanUid(v); return uid && !seen.has(uid) && seen.add(uid) ? uid : undefined; };
+    return {
+      state: STATES.some(([code]) => code === s.state) ? s.state : 'KY',
+      taxRate: s.taxRate === undefined ? undefined : cleanNumText(s.taxRate),
+      basket: s.basket === 'custom' || hasKey(BASKET_PRESETS, s.basket) ? s.basket : 'none',
+      customAmount: cleanNumText(s.customAmount),
+      customThreshold: cleanNumText(s.customThreshold),
+      items: rows(s.items).map((it) => {
+        const deals = migrateDeals(it) || {};
+        return {
+          uid: uniqueUid(it.uid), name: cleanName(it.name), qty: cleanCount(it.qty, 1),
+          retail: cleanNumText(it.retail), sale: cleanNumText(it.sale), dg: cleanNumText(it.dg), mfr: cleanNumText(it.mfr),
+          taxable: it.taxable !== false, hidden: it.hidden === true,
+          deals: { sale: cleanDeal(deals.sale), dg: cleanDeal(deals.dg), mfr: cleanDeal(deals.mfr) },
+        };
+      }),
+      spendDeals: rows(s.spendDeals).map((d) => ({
+        uid: uniqueUid(d.uid), name: cleanName(d.name),
+        amount: cleanNumText(d.amount), threshold: cleanNumText(d.threshold),
+        mode: d.mode === 'qty' ? 'qty' : 'spend', count: cleanNumText(d.count),
+        kind: hasKey(SPEND_KINDS, d.kind) ? d.kind : 'dg',
+        split: d.split === 'even' ? 'even' : 'price',
+        repeat: typeof d.repeat === 'boolean' ? d.repeat : undefined,
+        items: (Array.isArray(d.items) ? d.items.slice(0, MAX_SAVED_ROWS) : []).map(cleanUid).filter(Boolean),
+      })),
+    };
+  }
+
+  // Replaces whatever is on screen with a cleaned build (or a blank one).
+  function applySaved(saved) {
+    itemsList.innerHTML = '';
+    spendList.innerHTML = '';
+    stateSelect.value = saved ? saved.state : 'KY';
     const opt = stateSelect.selectedOptions[0];
     rateStateName.textContent = opt ? opt.dataset.name : 'Kentucky';
-    taxRateInput.value = saved.taxRate ?? (opt ? opt.dataset.rate : 6);
+    taxRateInput.value = saved && saved.taxRate !== undefined ? saved.taxRate : (opt ? opt.dataset.rate : 6);
 
-    const basketInput = document.querySelector(`input[name="basket"][value="${saved.basket}"]`);
-    if (basketInput) basketInput.checked = true;
-    customFields.hidden = saved.basket !== 'custom';
-    customAmount.value = saved.customAmount || '';
-    customThreshold.value = saved.customThreshold || '';
+    const basket = saved ? saved.basket : 'none';
+    $(`input[name="basket"][value="${basket}"]`).checked = true;
+    customFields.hidden = basket !== 'custom';
+    customAmount.value = saved ? saved.customAmount : '';
+    customThreshold.value = saved ? saved.customThreshold : '';
 
-    if (Array.isArray(saved.items) && saved.items.length) {
+    if (saved && saved.items.length) {
       saved.items.forEach((it) => addItemRow(it));
     } else {
       addItemRow();
       addItemRow();
     }
-    if (Array.isArray(saved.spendDeals)) saved.spendDeals.forEach((d) => addSpendRow(d));
+    if (saved) saved.spendDeals.forEach((d) => addSpendRow(d));
   }
+
+  function restoreState() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (e) { saved = null; }
+    applySaved(cleanSaved(saved));
+  }
+
+  // ---------- Saved scenarios ----------
+  // Named copies of the calculator, so a few different shopping plans can be
+  // kept and switched between. The calculator itself is still the working
+  // copy; a scenario only changes when you save over it.
+  const SCENARIOS_KEY = 'therealtotal:scenarios:v1';
+  const ACTIVE_SCENARIO_KEY = 'therealtotal:scenario-active';
+  const MAX_SCENARIOS = 100;
+  const scenarioNameInput = $('#scenario-name');
+  const scenarioSaveBtn = $('#scenario-save');
+  const scenarioSaveNewBtn = $('#scenario-save-new');
+  const scenarioStatus = $('#scenario-status');
+  const scenarioList = $('#scenario-list');
+
+  function cleanScenarios(raw) {
+    const seen = new Set();
+    return (Array.isArray(raw) ? raw.slice(0, MAX_SCENARIOS) : [])
+      .filter((sc) => sc && typeof sc === 'object' && cleanUid(sc.id) && !seen.has(sc.id) && seen.add(sc.id))
+      .map((sc) => ({
+        id: sc.id,
+        name: cleanName(sc.name).slice(0, 60) || 'Untitled',
+        savedAt: Number.isFinite(sc.savedAt) ? sc.savedAt : Date.now(),
+        units: Math.max(0, Math.round(num(sc.units))),
+        total: round2(num(sc.total)),
+        saved: round2(num(sc.saved)),
+        build: cleanSaved(sc.build) || cleanSaved({}),
+      }));
+  }
+
+  let scenarios = [];
+  let activeScenarioId = null;
+  try { scenarios = cleanScenarios(JSON.parse(localStorage.getItem(SCENARIOS_KEY))); } catch (e) { scenarios = []; }
+  try { activeScenarioId = localStorage.getItem(ACTIVE_SCENARIO_KEY); } catch (e) { activeScenarioId = null; }
+  if (!scenarios.some((sc) => sc.id === activeScenarioId)) activeScenarioId = null;
+
+  const activeScenario = () => scenarios.find((sc) => sc.id === activeScenarioId) || null;
+  // Builds go through cleanSaved on the way in, so compare cleaned copies.
+  const sameBuild = (a, b) => JSON.stringify(cleanSaved(a)) === JSON.stringify(cleanSaved(b));
+
+  function isBlankBuild() {
+    const s = serializeState();
+    return s.basket === 'none' && !s.spendDeals.length && s.items.every((it) =>
+      !it.name && !it.retail && !it.sale && !it.dg && !it.mfr && Object.values(it.deals).every((d) => d.type === 'none'));
+  }
+
+  // True when what's on screen would be lost by switching away.
+  function hasUnsavedChanges() {
+    const active = activeScenario();
+    return active ? !sameBuild(serializeState(), active.build) : !isBlankBuild();
+  }
+
+  function setActiveScenario(id) {
+    activeScenarioId = id;
+    try {
+      if (id) localStorage.setItem(ACTIVE_SCENARIO_KEY, id);
+      else localStorage.removeItem(ACTIVE_SCENARIO_KEY);
+    } catch (e) { /* storage unavailable */ }
+    const active = activeScenario();
+    scenarioNameInput.value = active ? active.name : '';
+    renderScenarioFlag();
+  }
+
+  function scenariosChanged(notify = true) {
+    try { localStorage.setItem(SCENARIOS_KEY, JSON.stringify(scenarios)); } catch (e) { /* storage unavailable */ }
+    renderScenarios();
+    if (notify) document.dispatchEvent(new CustomEvent('calc:change'));
+  }
+
+  function showScenarioStatus(text, tone = 'met') {
+    scenarioStatus.hidden = !text;
+    scenarioStatus.textContent = text || '';
+    scenarioStatus.className = `threshold-status ${tone}`;
+  }
+
+  // Rebuilt only when the list itself changes — rebuilding while typing
+  // would swap out a button between a tap's press and release.
+  function renderScenarios() {
+    scenarioList.innerHTML = '';
+    [...scenarios].sort((a, b) => b.savedAt - a.savedAt).forEach((sc) => {
+      const li = document.createElement('li');
+      li.className = 'scenario-row';
+      li.dataset.id = sc.id;
+      li.innerHTML = `
+        <button type="button" class="scenario-open">
+          <span class="scenario-title"><span class="scenario-name"></span><span class="scenario-flag"></span></span>
+          <span class="scenario-meta"></span>
+        </button>
+        <button type="button" class="remove-item" aria-label="Delete scenario">&times;</button>
+      `;
+      // Names are set as text, never markup — they can come from the sheet.
+      $('.scenario-name', li).textContent = sc.name;
+      const when = new Date(sc.savedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      $('.scenario-meta', li).textContent = `${sc.units} item${sc.units === 1 ? '' : 's'} · ${money(sc.total)} total`
+        + (sc.saved > 0 ? ` · saves ${money(sc.saved)}` : '') + ` · ${when}`;
+      scenarioList.appendChild(li);
+    });
+    renderScenarioFlag();
+  }
+
+  // Marks the open scenario and whether it has unsaved edits.
+  function renderScenarioFlag() {
+    const active = activeScenario();
+    const edited = active && hasUnsavedChanges();
+    scenarioSaveBtn.textContent = active ? 'Save changes' : 'Save scenario';
+    scenarioSaveNewBtn.hidden = !active;
+    $$('.scenario-row', scenarioList).forEach((li) => {
+      const on = li.dataset.id === activeScenarioId;
+      li.classList.toggle('is-active', on);
+      $('.scenario-flag', li).textContent = on ? (edited ? 'Open · unsaved changes' : 'Open') : '';
+    });
+  }
+
+  scenarioList.addEventListener('click', (e) => {
+    const li = e.target.closest('.scenario-row');
+    if (!li) return;
+    if (e.target.closest('.remove-item')) deleteScenario(li.dataset.id);
+    else if (e.target.closest('.scenario-open')) openScenario(li.dataset.id);
+  });
+
+  function snapshot(id, name) {
+    const result = calculate();
+    return {
+      id, name, savedAt: Date.now(),
+      units: result.items.filter((it) => it.retail > 0 || it.lineSale > 0).reduce((n, it) => n + it.qty, 0),
+      total: round2(result.total),
+      saved: round2(result.totalSaved),
+      build: cleanSaved(serializeState()),
+    };
+  }
+
+  // Saves over the open scenario, or as a new one. Returns false if it
+  // couldn't (the list is full).
+  function saveScenario(asNew) {
+    const active = asNew ? null : activeScenario();
+    let name = scenarioNameInput.value.trim().slice(0, 60);
+    if (!name) name = active ? active.name : `Scenario ${scenarios.length + 1}`;
+    let id;
+    if (active) {
+      id = active.id;
+      scenarios = scenarios.map((sc) => (sc.id === id ? snapshot(id, name) : sc));
+    } else {
+      if (scenarios.length >= MAX_SCENARIOS) {
+        showScenarioStatus(`You can keep up to ${MAX_SCENARIOS} scenarios — delete one first.`, 'unmet');
+        return false;
+      }
+      id = newUid();
+      scenarios.push(snapshot(id, name));
+    }
+    setActiveScenario(id);
+    scenariosChanged();
+    showScenarioStatus(`Saved “${name}”.`);
+    return true;
+  }
+
+  // Before replacing what's on screen, offer to save it.
+  async function okToLeave(goingTo) {
+    if (!hasUnsavedChanges()) return true;
+    const active = activeScenario();
+    const choice = await window.appChoose({
+      title: active ? `Save changes to “${active.name}”?` : 'Save what’s on the calculator?',
+      message: `${active ? 'Your changes aren’t saved yet.' : 'It isn’t saved as a scenario yet.'} ${goingTo}`,
+      confirmText: 'Save it first',
+      altText: 'Don’t save',
+      cancelText: 'Cancel',
+    });
+    if (choice === 'cancel') return false;
+    return choice === 'alt' || saveScenario(false);
+  }
+
+  async function openScenario(id) {
+    const target = scenarios.find((sc) => sc.id === id);
+    if (!target) return;
+    if (id === activeScenarioId) {
+      if (!hasUnsavedChanges()) return;
+      // Re-opening the open scenario just throws away its unsaved edits.
+      if (!await window.appConfirm({
+        title: `Undo changes to “${target.name}”?`,
+        message: 'This goes back to how it was last saved.',
+        confirmText: 'Undo changes', cancelText: 'Keep editing', danger: true,
+      })) return;
+    } else if (!await okToLeave(`Opening “${target.name}” will replace it.`)) {
+      return;
+    }
+    applySaved(target.build);
+    setActiveScenario(id);
+    showScenarioStatus('');
+    persistAndRender();
+  }
+
+  async function deleteScenario(id) {
+    const target = scenarios.find((sc) => sc.id === id);
+    if (!target || !await window.appConfirm({
+      title: `Delete “${target.name}”?`,
+      message: id === activeScenarioId ? 'What’s on the calculator stays; it just won’t be saved as a scenario.' : 'This can’t be undone.',
+      confirmText: 'Delete', cancelText: 'Keep', danger: true,
+    })) return;
+    scenarios = scenarios.filter((sc) => sc.id !== id);
+    if (id === activeScenarioId) setActiveScenario(null);
+    showScenarioStatus('');
+    scenariosChanged();
+  }
+
+  scenarioSaveBtn.addEventListener('click', () => saveScenario(false));
+  scenarioSaveNewBtn.addEventListener('click', () => saveScenario(true));
+  scenarioNameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveScenario(false); }
+  });
+
+  $('#scenario-new').addEventListener('click', async () => {
+    if (!await okToLeave('Starting a new scenario clears the calculator.')) return;
+    // A new scenario keeps your tax setting but starts with an empty cart.
+    const keep = cleanSaved(serializeState());
+    applySaved({ ...keep, basket: 'none', customAmount: '', customThreshold: '', items: [], spendDeals: [] });
+    setActiveScenario(null);
+    showScenarioStatus('');
+    persistAndRender();
+    scenarioNameInput.focus();
+  });
+
+  // ---------- Google Sheet sync hooks (used by bought.js) ----------
+  // The sheet keeps the calculator's working copy and the saved scenarios.
+  window.calcSync = {
+    get: () => ({ build: serializeState(), scenarios }),
+    // True when there's nothing worth keeping — no scenarios, just empty item rows.
+    isBlank: () => !scenarios.length && isBlankBuild(),
+    load(raw) {
+      if (!raw || typeof raw !== 'object') return;
+      scenarios = cleanScenarios(raw.scenarios);
+      setActiveScenario(activeScenario() ? activeScenarioId : null);
+      const saved = cleanSaved(raw.build);
+      if (saved && !sameBuild(serializeState(), saved)) applySaved(saved);
+      scenariosChanged(false);
+      persistAndRender(false);
+    },
+  };
 
   // ---------- Init ----------
   restoreState();
+  renderScenarios();
+  setActiveScenario(activeScenarioId);
   persistAndRender();
 })();
