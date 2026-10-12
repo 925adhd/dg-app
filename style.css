@@ -819,7 +819,7 @@ select:focus, input:focus {
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 @media (max-width: 900px) {
@@ -845,6 +845,21 @@ select:focus, input:focus {
 .stat.good .stat-value { color: var(--cash); }
 .stat.bad .stat-value { color: var(--alert); }
 .stat-sub { font-size: 0.74rem; color: var(--muted); line-height: 1.35; }
+/* The stockpile: everything you have on hand, set apart at the top. */
+.stat-hero {
+  grid-column: 1 / -1;
+  gap: 4px;
+  padding: 16px 18px;
+  background: var(--dg-black);
+  border: none;
+  border-left: 6px solid var(--dg-yellow);
+}
+:root[data-theme="dark"] .stat-hero { background: var(--paper); border: 1px solid var(--dg-yellow); border-left-width: 6px; }
+.stat-hero .stat-label { color: #D8D8D4; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.74rem; }
+.stat-hero .stat-value { font-size: 2.1rem; color: var(--dg-yellow); line-height: 1.1; }
+.stat-hero .stat-unit { font-family: var(--font-ui); font-size: 1rem; font-weight: 600; color: #FFFFFF; }
+.stat-hero .stat-sub { color: #D8D8D4; font-size: 0.82rem; }
+:root[data-theme="dark"] .stat-hero .stat-unit { color: var(--ink); }
 
 .sync-panel {
   background: var(--paper);
@@ -993,7 +1008,7 @@ select:focus, input:focus {
 }
 .barcode-scan:hover { background: var(--tag-bg); }
 .barcode-scan:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.haul-loose-title { margin: 0; font-size: 1rem; font-weight: 700; }
+
 .scan-into { margin: -4px 0 12px; }
 
 .empty-note {
@@ -1013,8 +1028,30 @@ select:focus, input:focus {
   border: 1px solid var(--line);
   border-left: 4px solid var(--dg-yellow);
   border-radius: 10px;
-  padding: 16px;
 }
+.haul-loose { border-left-color: var(--line); }
+.haul-summary, .b-item-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.haul-summary { padding: 14px 16px; border-radius: 10px; }
+.haul-summary:focus-visible, .b-item-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.haul-summary-text, .b-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.haul-title-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.haul-title { font-weight: 700; font-size: 1rem; overflow-wrap: anywhere; }
+.haul-date { font-size: 0.85rem; color: var(--muted); }
+.chevron { flex: 0 0 auto; color: var(--muted); transition: transform 0.15s; }
+.is-open > .haul-summary .chevron, .is-open > .b-item-summary .chevron { transform: rotate(180deg); }
+.haul + .haul { margin-top: 10px; }
+.haul-body { padding: 0 16px 16px; }
 .haul-head {
   display: flex;
   flex-wrap: wrap;
@@ -1042,18 +1079,24 @@ select:focus, input:focus {
   width: 100%;
 }
 .haul-totals {
-  margin: 10px 0 12px;
   font-family: var(--font-tape);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: var(--muted);
 }
+.haul-head { margin-bottom: 12px; }
 
 .b-item {
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 10px;
+  padding: 8px;
+  margin-bottom: 8px;
 }
+.b-item.is-open { padding: 12px; }
+.b-item-summary { display: flex; align-items: center; gap: 10px; }
+.b-item-toggle { padding: 2px 0; }
+.b-item-name { font-weight: 600; font-size: 0.95rem; overflow-wrap: anywhere; }
+.b-item-meta { font-family: var(--font-tape); font-size: 0.76rem; color: var(--muted); }
+.b-item-body { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .b-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1356,7 +1399,7 @@ select:focus, input:focus {
 .product-owned { margin-top: 14px; }
 .product-actions { display: grid; gap: 8px; margin-top: 14px; }
 .product-actions .add-button { margin-top: 0; }
-.inv-item { background: var(--paper); }
+.inv-item { background: var(--paper); padding: 12px; }
 .inv-head {
   display: flex;
   align-items: center;

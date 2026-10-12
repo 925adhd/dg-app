@@ -276,7 +276,13 @@
         <span class="stat-value">${value}</span>
         ${sub ? `<span class="stat-sub">${sub}</span>` : ''}
       </div>`;
+    const products = new Set(data.items.filter((it) => it.soldQty < it.qty).map((it) => productKey(it.name))).size;
     summaryEl.innerHTML = `
+      <div class="stat stat-hero">
+        <span class="stat-label">Your stockpile</span>
+        <span class="stat-value">${t.leftUnits}<span class="stat-unit"> item${t.leftUnits === 1 ? '' : 's'} on hand</span></span>
+        <span class="stat-sub">${products} product${products === 1 ? '' : 's'} · ${money(t.leftCost)} cost · ${signedMoney(t.potential)} potential profit</span>
+      </div>
       ${tile('Spent', money(t.paid), `${t.units} item${t.units === 1 ? '' : 's'} · incl. ${money(t.tax)} tax`)}
       ${tile('Saved', money(t.saved), `${pct(t.saved, t.retail)}% off ${money(t.retail)} retail`, 'good')}
       ${tile('Sold', money(t.soldTotal), `${t.soldUnits} item${t.soldUnits === 1 ? '' : 's'} sold`)}
@@ -286,7 +292,6 @@
         const net = t.profit - rent.paid;
         return tile('Profit', signedMoney(net), `after cost, fees & ${money(rent.paid)} rent`, net < 0 ? 'bad' : 'good');
       })()}
-      ${tile('In stock', `${t.leftUnits}`, `${money(t.leftCost)} cost · ${signedMoney(t.potential)} potential`)}
     `;
     renderRentStatus();
   }
@@ -312,75 +317,108 @@
     return parts.join('');
   }
 
-  function itemHTML(it) {
+  // Trips and items start folded up as one-line summaries; these remember
+  // which ones are open across re-renders. '' is the no-trip card.
+  const openHauls = new Set();
+  const openItems = new Set();
+
+  const itemMetaText = (it) => [
+    `Qty ${it.qty}`,
+    it.totalPaid ? `Paid ${money(it.totalPaid)}` : '',
+    STATUS_LABELS[itemCalc(it).status],
+  ].filter(Boolean).join(' · ');
+
+  const haulTitle = (h) => h.name || h.store || 'Shopping trip';
+
+  function itemHTML(it, forceOpen = false) {
+    const open = forceOpen || openItems.has(it.id);
     const field = (label, f, value, attrs = 'min="0" step="0.01" inputmode="decimal"', type = 'number') => `
       <label><span class="field-label">${label}</span><input type="${type}" data-f="${f}" value="${esc(value)}" ${attrs}></label>`;
     return `
-      <div class="b-item" data-item="${esc(it.id)}">
-        <div class="item-row-top">
+      <div class="b-item${open ? ' is-open' : ''}" data-item="${esc(it.id)}">
+        <div class="b-item-summary">
           ${photoThumbHTML(it.photo, it.name)}
-          <input type="text" class="item-name" data-f="name" placeholder="Item name" maxlength="${MAX_TEXT}" value="${esc(it.name)}">
-          <button type="button" class="remove-item" data-action="delete-item" aria-label="Delete item">&times;</button>
+          <button type="button" class="b-item-toggle" data-action="toggle-item" aria-expanded="${open}">
+            <span class="b-item-text">
+              <span class="b-item-name">${esc(it.name || 'Unnamed item')}</span>
+              <span class="b-item-meta">${esc(itemMetaText(it))}</span>
+            </span>
+            <svg class="chevron" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
         </div>
-        <div class="b-grid">
-          ${field('Qty', 'qty', it.qty, 'min="1" step="1" inputmode="numeric"')}
-          ${field('Retail each', 'unitRetail', blankIfZero(it.unitRetail))}
-          ${field('Paid total (with tax)', 'totalPaid', blankIfZero(it.totalPaid))}
-          ${field('Resell at (each)', 'resalePrice', blankIfZero(it.resalePrice))}
-        </div>
-        <div class="b-grid b-grid-3">
-          <label><span class="field-label">Location</span><input type="text" data-f="location" placeholder="e.g. Bin 3" maxlength="${MAX_TEXT}" value="${esc(it.location)}"></label>
-          <label><span class="field-label">Notes</span><input type="text" data-f="notes" placeholder="e.g. dented box" maxlength="${MAX_TEXT}" value="${esc(it.notes)}"></label>
-          <label><span class="field-label">Barcode</span><span class="barcode-field"><input type="text" data-f="upc" inputmode="numeric" placeholder="Scan or type" maxlength="14" autocomplete="off" value="${esc(it.upc)}"><button type="button" class="barcode-scan" data-action="scan-upc" aria-label="Scan this item’s barcode" title="Scan this item’s barcode">${BARCODE_ICON}</button></span></label>
-        </div>
-        <details class="b-sale"${it.soldQty > 0 ? ' open' : ''}>
-          <summary>Sale info</summary>
-          <div class="b-grid">
-            ${field('Qty sold', 'soldQty', blankIfZero(it.soldQty), 'min="0" step="1" inputmode="numeric"')}
-            ${field('Sold for (total)', 'soldTotal', blankIfZero(it.soldTotal))}
-            ${field('Fees & shipping', 'fees', blankIfZero(it.fees))}
-            ${field('Date sold', 'soldDate', it.soldDate, '', 'date')}
+        <div class="b-item-body"${open ? '' : ' hidden'}>
+          <div class="item-row-top">
+            <input type="text" class="item-name" data-f="name" placeholder="Item name" maxlength="${MAX_TEXT}" value="${esc(it.name)}">
+            <button type="button" class="remove-item" data-action="delete-item" aria-label="Delete item">&times;</button>
           </div>
-          <label class="b-wide"><span class="field-label">Sold on</span><input type="text" data-f="platform" placeholder="e.g. Facebook, eBay" maxlength="${MAX_TEXT}" value="${esc(it.platform)}"></label>
-        </details>
-        <div class="b-foot">${itemFootHTML(it)}</div>
+          <div class="b-grid">
+            ${field('Qty', 'qty', it.qty, 'min="1" step="1" inputmode="numeric"')}
+            ${field('Retail each', 'unitRetail', blankIfZero(it.unitRetail))}
+            ${field('Paid total (with tax)', 'totalPaid', blankIfZero(it.totalPaid))}
+            ${field('Resell at (each)', 'resalePrice', blankIfZero(it.resalePrice))}
+          </div>
+          <div class="b-grid b-grid-3">
+            <label><span class="field-label">Location</span><input type="text" data-f="location" placeholder="e.g. Bin 3" maxlength="${MAX_TEXT}" value="${esc(it.location)}"></label>
+            <label><span class="field-label">Notes</span><input type="text" data-f="notes" placeholder="e.g. dented box" maxlength="${MAX_TEXT}" value="${esc(it.notes)}"></label>
+            <label><span class="field-label">Barcode</span><span class="barcode-field"><input type="text" data-f="upc" inputmode="numeric" placeholder="Scan or type" maxlength="14" autocomplete="off" value="${esc(it.upc)}"><button type="button" class="barcode-scan" data-action="scan-upc" aria-label="Scan this item’s barcode" title="Scan this item’s barcode">${BARCODE_ICON}</button></span></label>
+          </div>
+          <details class="b-sale"${it.soldQty > 0 ? ' open' : ''}>
+            <summary>Sale info</summary>
+            <div class="b-grid">
+              ${field('Qty sold', 'soldQty', blankIfZero(it.soldQty), 'min="0" step="1" inputmode="numeric"')}
+              ${field('Sold for (total)', 'soldTotal', blankIfZero(it.soldTotal))}
+              ${field('Fees & shipping', 'fees', blankIfZero(it.fees))}
+              ${field('Date sold', 'soldDate', it.soldDate, '', 'date')}
+            </div>
+            <label class="b-wide"><span class="field-label">Sold on</span><input type="text" data-f="platform" placeholder="e.g. Facebook, eBay" maxlength="${MAX_TEXT}" value="${esc(it.platform)}"></label>
+          </details>
+          <div class="b-foot">${itemFootHTML(it)}</div>
+        </div>
       </div>`;
   }
 
-  // Items added straight to inventory, with no trip.
-  function looseHTML(items) {
+  // A trip (or, with h = null, the card for items without a trip): a one-line
+  // summary that opens to show its items.
+  function haulHTML(h, items, forceOpen = false) {
+    const id = h ? h.id : '';
+    const open = forceOpen || openHauls.has(id);
+    const head = h ? `
+          <div class="haul-head">
+            <div class="haul-fields">
+              <input type="date" data-h="date" value="${esc(h.date)}" aria-label="Trip date">
+              <input type="text" data-h="name" placeholder="Trip name (optional)" maxlength="${MAX_TEXT}" value="${esc(h.name)}" aria-label="Trip name">
+              <input type="text" data-h="store" placeholder="Store" maxlength="${MAX_TEXT}" value="${esc(h.store)}" aria-label="Store">
+            </div>
+            <button type="button" class="ghost-button" data-action="delete-haul">Delete trip</button>
+          </div>` : '';
     return `
-      <article class="haul haul-loose" data-haul="">
-        <div class="haul-head">
-          <h3 class="haul-loose-title">Not from a trip</h3>
-        </div>
-        <p class="haul-totals">${esc(haulTotalsText(''))}</p>
-        <div class="haul-items">${items.map(itemHTML).join('')}</div>
-        <div class="haul-add">
-          <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
-          <button type="button" class="add-button add-button-secondary" data-action="scan-items">Scan items</button>
+      <article class="haul${h ? '' : ' haul-loose'}${open ? ' is-open' : ''}" data-haul="${esc(id)}">
+        <button type="button" class="haul-summary" data-action="toggle-haul" aria-expanded="${open}">
+          <span class="haul-summary-text">
+            <span class="haul-title-row">
+              <span class="haul-title">${esc(h ? haulTitle(h) : 'Items without a trip')}</span>
+              ${h ? `<span class="haul-date">${esc(formatDate(h.date))}</span>` : ''}
+            </span>
+            <span class="haul-totals">${esc(haulTotalsText(id))}</span>
+          </span>
+          <svg class="chevron" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="haul-body"${open ? '' : ' hidden'}>${head}
+          <div class="haul-items">${items.map((it) => itemHTML(it)).join('')}</div>
+          <div class="haul-add">
+            <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
+            <button type="button" class="add-button add-button-secondary" data-action="scan-items">Scan items</button>
+          </div>
         </div>
       </article>`;
   }
 
-  function haulHTML(h, items) {
-    return `
-      <article class="haul" data-haul="${esc(h.id)}">
-        <div class="haul-head">
-          <div class="haul-fields">
-            <input type="date" data-h="date" value="${esc(h.date)}" aria-label="Trip date">
-            <input type="text" data-h="name" placeholder="Trip name (optional)" maxlength="${MAX_TEXT}" value="${esc(h.name)}" aria-label="Trip name">
-            <input type="text" data-h="store" placeholder="Store" maxlength="${MAX_TEXT}" value="${esc(h.store)}" aria-label="Store">
-          </div>
-          <button type="button" class="ghost-button" data-action="delete-haul">Delete trip</button>
-        </div>
-        <p class="haul-totals">${esc(haulTotalsText(h.id))}</p>
-        <div class="haul-items">${items.map(itemHTML).join('')}</div>
-        <div class="haul-add">
-          <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
-          <button type="button" class="add-button add-button-secondary" data-action="scan-items">Scan items</button>
-        </div>
-      </article>`;
+  // Folds a trip or item open or shut in place, without re-rendering.
+  function toggleOpen(el, set, key, bodySel, open = !el.classList.contains('is-open')) {
+    if (open) set.add(key); else set.delete(key);
+    el.classList.toggle('is-open', open);
+    $(bodySel, el).hidden = !open;
+    el.querySelector('[aria-expanded]').setAttribute('aria-expanded', String(open));
   }
 
   // One search box at the top of the tab drives both views.
@@ -393,18 +431,20 @@
     const q = searchQuery();
     const sorted = data.hauls.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     const loose = itemsOf('').filter((it) => itemMatches(it, mode) && itemSearchMatch(it, q));
-    const html = (loose.length ? looseHTML(loose) : '') + sorted.map((h) => {
+    // Searching or filtering opens every trip that has a match.
+    const reveal = !!q || mode !== 'all';
+    const html = (loose.length ? haulHTML(null, loose, reveal) : '') + sorted.map((h) => {
       const all = itemsOf(h.id);
       // A search that matches the trip itself (name or store) shows the whole trip.
       const tripHit = q && (has(h.name, q) || has(h.store, q));
       const shown = all.filter((it) => itemMatches(it, mode) && (tripHit || itemSearchMatch(it, q)));
       // Always show empty trips under "All" so a just-added one doesn't vanish.
       if (!shown.length && (q || mode !== 'all' || all.length)) return '';
-      return haulHTML(h, shown);
+      return haulHTML(h, shown, reveal && shown.length > 0);
     }).join('');
     haulList.innerHTML = html || `<p class="empty-note">${data.hauls.length || data.items.length
       ? (q ? 'Nothing matches that search.' : 'Nothing matches this filter.')
-      : 'No purchases yet. Build a receipt on the Calculator tab and tap “Save to Bought”, or add a purchase by hand.'}</p>`;
+      : 'No purchases yet. Build a receipt on the Calculator tab and tap “Save to Bought”, or start a new trip by hand.'}</p>`;
     showPhotos(haulList);
   }
 
@@ -464,7 +504,7 @@
   function invGroupHTML(g, index) {
     const lotLines = g.lots.map((it) => {
       const c = itemCalc(it);
-      return `<li>${it.haulId ? esc(formatDate(g.haulDate.get(it.haulId))) : 'No trip'} · ${c.left} left · ${money(c.unitCost)} each${it.location ? ` · ${esc(it.location)}` : ''}${it.notes ? ` · ${esc(it.notes)}` : ''}</li>`;
+      return `<li>${it.haulId ? esc(formatDate(g.haulDate.get(it.haulId))) : 'Without a trip'} · ${c.left} left · ${money(c.unitCost)} each${it.location ? ` · ${esc(it.location)}` : ''}${it.notes ? ` · ${esc(it.notes)}` : ''}</li>`;
     }).join('');
     const field = (label, cls, attrs, type = 'number') => `<label><span class="field-label">${label}</span><input type="${type}" class="${cls}" ${attrs}></label>`;
     return `
@@ -732,6 +772,8 @@
       if (!haul) return;
       const v = el.dataset.h === 'date' ? (DATE_RE.test(el.value) ? el.value : haul.date) : cleanText(el.value);
       haul[el.dataset.h] = v;
+      $('.haul-title', haulEl).textContent = haulTitle(haul);
+      $('.haul-date', haulEl).textContent = formatDate(haul.date);
       save();
       return;
     }
@@ -753,6 +795,8 @@
     save();
     $('.b-foot', itemEl).innerHTML = itemFootHTML(it);
     $('.haul-totals', haulEl).textContent = haulTotalsText(haulEl.dataset.haul);
+    $('.b-item-name', itemEl).textContent = it.name || 'Unnamed item';
+    $('.b-item-meta', itemEl).textContent = itemMetaText(it);
     renderSummary();
   });
 
@@ -775,15 +819,21 @@
     const haulEl = btn.closest('.haul');
     const haulId = haulEl && haulEl.dataset.haul;
 
-    if (btn.dataset.action === 'photo') {
+    if (btn.dataset.action === 'toggle-haul') {
+      toggleOpen(haulEl, openHauls, haulId, '.haul-body');
+    } else if (btn.dataset.action === 'toggle-item') {
+      const itemEl = btn.closest('.b-item');
+      toggleOpen(itemEl, openItems, itemEl.dataset.item, '.b-item-body');
+    } else if (btn.dataset.action === 'photo') {
       const it = data.items.find((i) => i.id === btn.closest('.b-item').dataset.item);
       if (it) openPhoto([it]);
     } else if (btn.dataset.action === 'add-item') {
-      data.items.push(cleanItem({ haulId, qty: 1 }));
+      const it = cleanItem({ haulId, qty: 1 });
+      data.items.push(it);
+      openItems.add(it.id);
       save();
       render();
-      const added = $$(`.haul[data-haul="${CSS.escape(haulId)}"] .b-item`).pop();
-      if (added) $('.item-name', added).focus();
+      focusItem(it.id);
     } else if (btn.dataset.action === 'scan-items') {
       scanIntoHaul(haulId);
     } else if (btn.dataset.action === 'scan-upc') {
@@ -817,26 +867,36 @@
 
   filterInputs.forEach((r) => r.addEventListener('change', renderHauls));
 
+  // Puts the cursor in a just-added item's name box.
+  function focusItem(id) {
+    const el = $(`.b-item[data-item="${CSS.escape(id)}"] .item-name`);
+    if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+  }
+
   $('#add-loose').addEventListener('click', () => {
-    data.items.push(cleanItem({ haulId: '', qty: 1 }));
+    const it = cleanItem({ haulId: '', qty: 1 });
+    data.items.push(it);
+    openHauls.add('');
+    openItems.add(it.id);
     filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
     searchInput.value = '';
     save();
     setView('trips');
-    const el = $$('.haul[data-haul=""] .item-name').pop();
-    if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+    focusItem(it.id);
   });
 
   addHaulBtn.addEventListener('click', () => {
     const haul = cleanHaul({ date: today(), store: 'Dollar General' });
+    const it = cleanItem({ haulId: haul.id, qty: 1 });
     data.hauls.unshift(haul);
-    data.items.push(cleanItem({ haulId: haul.id, qty: 1 }));
+    data.items.push(it);
+    openHauls.add(haul.id);
+    openItems.add(it.id);
     filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
     searchInput.value = '';
     save();
     setView('trips');
-    const el = $(`.haul[data-haul="${CSS.escape(haul.id)}"] .item-name`);
-    if (el) el.focus();
+    focusItem(it.id);
   });
 
   // ---------- Barcode scanning ----------
@@ -1059,11 +1119,15 @@
     return { panel, onCode, count: () => scanned.size };
   }
 
-  // Jump to a trip, at the first item that still needs a name typed in.
+  // Opens a trip and jumps to it, at the first item that still needs a name.
   function showHaul(haulId) {
+    openHauls.add(haulId);
+    const unnamed = itemsOf(haulId).filter((it) => !it.name);
+    unnamed.forEach((it) => openItems.add(it.id));
+    render();
     const haulEl = $(`.haul[data-haul="${CSS.escape(haulId)}"]`);
     if (!haulEl) return;
-    const blank = $('.item-name[value=""]', haulEl);
+    const blank = unnamed.length && $(`.b-item[data-item="${CSS.escape(unnamed[0].id)}"]`, haulEl);
     (blank || haulEl).scrollIntoView({ block: blank ? 'center' : 'start' });
   }
 
@@ -1103,7 +1167,7 @@
         <p class="threshold-status product-owned"></p>
         <div class="product-actions">
           <button type="button" class="add-button" data-p="show">Show my items</button>
-          <button type="button" class="add-button add-button-secondary" data-p="add">Add to a new purchase</button>
+          <button type="button" class="add-button add-button-secondary" data-p="add">Add to a new trip</button>
           <button type="button" class="add-button add-button-secondary" data-p="add-loose">Add without a trip</button>
           <button type="button" class="ghost-button" data-p="again">Scan another</button>
         </div>
@@ -1172,12 +1236,15 @@
             data.hauls.unshift(haul);
             haulId = haul.id;
           }
-          data.items.push(cleanItem({ haulId, qty: 1, upc: code, name, photo, unitRetail: known ? known.unitRetail : 0 }));
+          const it = cleanItem({ haulId, qty: 1, upc: code, name, photo, unitRetail: known ? known.unitRetail : 0 });
+          data.items.push(it);
+          openHauls.add(haulId);
+          openItems.add(it.id);
           filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
           searchInput.value = '';
           save();
           setView('trips');
-          const el = $$(`.haul[data-haul="${CSS.escape(haulId)}"] .b-item`).pop();
+          const el = $(`.b-item[data-item="${CSS.escape(it.id)}"]`);
           if (el) el.scrollIntoView({ block: 'center' });
         } else if (action === 'again') {
           scanFromSearch('lookup');
@@ -1194,7 +1261,7 @@
   const ADD_HINT = 'Scan each item. Use + for more than one of the same thing. Tap × when you’re finished.';
   const SCAN_MODES = {
     lookup: ['Look up a product', 'Scan any product to see what it is and whether you have it.'],
-    add: ['Add to a new purchase', ADD_HINT],
+    add: ['Add to a new trip', ADD_HINT],
     loose: ['Add without a trip', ADD_HINT],
   };
 
@@ -1288,6 +1355,7 @@
     if (!lines.length) return;
     const haul = cleanHaul({ date: today(), store: 'Dollar General' });
     data.hauls.unshift(haul);
+    openHauls.add(haul.id);
     lines.forEach((line) => {
       const it = cleanItem({ ...line, haulId: haul.id });
       if (it) data.items.push(it);
