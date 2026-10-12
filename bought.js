@@ -22,6 +22,8 @@
   // typeof check matters: ID_RE.test(undefined) is true (it tests "undefined").
   const validId = (v) => typeof v === 'string' && ID_RE.test(v);
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  // Product photos may only come from the databases' own image servers.
+  const IMAGE_RE = /^https:\/\/images\.open(food|products|beauty)facts\.org\/[\w./-]+$/;
   const MAX_TEXT = 200;
   const MAX_ROWS = 5000;
 
@@ -102,6 +104,9 @@
   // hostile values can't break the page or sneak markup in.
   const cleanText = (v) => (v === undefined || v === null ? '' : String(v).slice(0, MAX_TEXT));
   const cleanMoney = (v) => Math.max(0, round2(num(v)));
+  // An item's photo is either the id of one you took (kept in photos.js and
+  // the sheet's Photos tab) or a product-database image link.
+  const cleanPhoto = (v) => (validId(v) || (typeof v === 'string' && IMAGE_RE.test(v)) ? v : '');
   // Barcodes are kept as digit strings so leading zeros survive.
   const cleanUpc = (v) => (v === undefined || v === null ? '' : String(v).replace(/\D/g, '').slice(0, 14));
 
@@ -125,6 +130,7 @@
       haulId: i.haulId,
       name: cleanText(i.name),
       upc: cleanUpc(i.upc),
+      photo: cleanPhoto(i.photo),
       qty,
       unitRetail,
       totalPaid: cleanMoney(i.totalPaid),
@@ -168,6 +174,7 @@
   function save() {
     persist();
     scheduleSync();
+    schedulePhotoCleanup();
   }
 
   // ---------- Math ----------
@@ -309,6 +316,7 @@
     return `
       <div class="b-item" data-item="${esc(it.id)}">
         <div class="item-row-top">
+          ${photoThumbHTML(it.photo, it.name)}
           <input type="text" class="item-name" data-f="name" placeholder="Item name" maxlength="${MAX_TEXT}" value="${esc(it.name)}">
           <button type="button" class="remove-item" data-action="delete-item" aria-label="Delete item">&times;</button>
         </div>
@@ -378,6 +386,7 @@
     haulList.innerHTML = html || `<p class="empty-note">${data.hauls.length
       ? (q ? 'Nothing matches that search.' : 'Nothing matches this filter.')
       : 'No purchases yet. Build a receipt on the Calculator tab and tap “Save to Bought”, or add a purchase by hand.'}</p>`;
+    showPhotos(haulList);
   }
 
   // ---------- Inventory view ----------
@@ -442,6 +451,7 @@
     return `
       <div class="b-item inv-item" data-group="${index}">
         <div class="inv-head">
+          ${photoThumbHTML((g.lots.find((it) => it.photo) || {}).photo, g.name)}
           <span class="inv-name">${esc(g.name)}</span>
           <span class="inv-onhand">${g.onHand} on hand</span>
           <button type="button" class="remove-item" data-action="remove-stock" aria-label="Remove from inventory">&times;</button>
@@ -477,6 +487,7 @@
     invList.innerHTML = shown.length
       ? shown.map(({ g, i }) => invGroupHTML(g, i)).join('')
       : `<p class="empty-note">${invGroups.length ? 'Nothing in stock matches that search.' : 'Nothing in stock. Items you buy show up here until they’re sold.'}</p>`;
+    showPhotos(invList);
   }
 
   // Splits a sale across the oldest stock first, sharing the money and fees
@@ -550,6 +561,12 @@
   }
 
   invList.addEventListener('click', (e) => {
+    const photoBtn = e.target.closest('[data-action="photo"]');
+    if (photoBtn) {
+      const g = invGroups[Number(photoBtn.closest('.inv-item').dataset.group)];
+      if (g) openPhoto(g.lots);
+      return;
+    }
     const removeBtn = e.target.closest('[data-action="remove-stock"]');
     if (removeBtn) {
       const g = invGroups[Number(removeBtn.closest('.inv-item').dataset.group)];
@@ -738,7 +755,10 @@
     const haulEl = btn.closest('.haul');
     const haulId = haulEl && haulEl.dataset.haul;
 
-    if (btn.dataset.action === 'add-item') {
+    if (btn.dataset.action === 'photo') {
+      const it = data.items.find((i) => i.id === btn.closest('.b-item').dataset.item);
+      if (it) openPhoto([it]);
+    } else if (btn.dataset.action === 'add-item') {
       data.items.push(cleanItem({ haulId, qty: 1 }));
       save();
       render();
@@ -797,23 +817,23 @@
   try {
     const raw = JSON.parse(localStorage.getItem(NAMES_KEY));
     if (raw && typeof raw === 'object') {
-      Object.entries(raw).forEach(([code, name]) => {
-        if (/^\d{6,14}$/.test(code) && typeof name === 'string' && name) lookedUpNames[code] = cleanText(name);
+      Object.entries(raw).forEach(([code, v]) => {
+        const name = typeof v === 'string' ? v : v && v.name;
+        const image = v && typeof v.image === 'string' && IMAGE_RE.test(v.image) ? v.image : '';
+        if (/^\d{6,14}$/.test(code) && typeof name === 'string' && name) lookedUpNames[code] = { name: cleanText(name), image };
       });
     }
   } catch (e) { lookedUpNames = {}; }
 
-  function rememberName(code, name) {
+  function rememberName(code, name, image) {
     delete lookedUpNames[code];
-    lookedUpNames[code] = name;
+    lookedUpNames[code] = { name, image: image || '' };
     const codes = Object.keys(lookedUpNames);
     codes.slice(0, Math.max(0, codes.length - MAX_NAMES)).forEach((c) => delete lookedUpNames[c]);
     try { localStorage.setItem(NAMES_KEY, JSON.stringify(lookedUpNames)); } catch (e) { /* storage unavailable */ }
   }
 
   const cleanField = (v) => String(v || '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT);
-  // Only the databases' own image servers, over https.
-  const IMAGE_RE = /^https:\/\/images\.open(food|products|beauty)facts\.org\/[\w./-]+$/;
 
   // Brand, name, size and photo from a database record. The full name reads
   // like "Gain Detergent 92 oz".
@@ -831,7 +851,7 @@
   // database has it, or { offline: true } when none could be reached.
   // `cached` skips the network for a name looked up before.
   async function lookUpOnline(code, cached = true) {
-    if (cached && lookedUpNames[code]) return { name: lookedUpNames[code] };
+    if (cached && lookedUpNames[code]) return { ...lookedUpNames[code] };
     let answered = false;
     const tries = LOOKUP_HOSTS.map(async (host) => {
       const ctrl = new AbortController();
@@ -851,10 +871,10 @@
     });
     try {
       const product = await Promise.any(tries);
-      rememberName(code, product.name);
+      rememberName(code, product.name, product.image);
       return product;
     } catch (e) {
-      if (lookedUpNames[code]) return { name: lookedUpNames[code] };
+      if (lookedUpNames[code]) return { ...lookedUpNames[code] };
       return answered ? { name: '' } : { offline: true };
     }
   }
@@ -879,7 +899,8 @@
     const known = knownItem(code);
     const it = cleanItem({
       haulId, qty: 1, upc: code,
-      name: known ? known.name : lookedUpNames[code] || '',
+      name: known ? known.name : (lookedUpNames[code] || {}).name || '',
+      photo: known && known.photo ? known.photo : (lookedUpNames[code] || {}).image || '',
       unitRetail: known ? known.unitRetail : 0,
     });
     data.items.push(it);
@@ -891,6 +912,7 @@
     const found = await lookUpOnline(code);
     if (found.name && data.items.includes(it) && !it.name) {
       it.name = cleanText(found.name);
+      if (!it.photo) it.photo = cleanPhoto(found.image);
       save();
       render();
       return { text: `Added ${it.name}.`, tone: 'met' };
@@ -1053,10 +1075,12 @@
     if (!productDialog) buildProductDialog();
     const known = knownItem(code);
     const name = product.name || (known && known.name) || '';
+    const photo = (known && known.photo) || product.image || '';
     const img = $('.product-img', productDialog);
-    img.hidden = !product.image;
+    img.hidden = !photo;
     img.removeAttribute('src');
-    if (product.image) img.src = product.image;
+    delete img.dataset.photoId;
+    if (validId(photo)) { img.dataset.photoId = photo; showPhotos(productDialog); } else if (photo) img.src = photo;
     $('.product-name', productDialog).textContent = name || 'Unknown product';
     const meta = [product.brand, product.size].filter(Boolean).join(' · ');
     $('.product-meta', productDialog).textContent = product.name
@@ -1082,7 +1106,7 @@
         } else if (action === 'add') {
           const haul = cleanHaul({ date: today(), store: 'Dollar General' });
           data.hauls.unshift(haul);
-          data.items.push(cleanItem({ haulId: haul.id, qty: 1, upc: code, name, unitRetail: known ? known.unitRetail : 0 }));
+          data.items.push(cleanItem({ haulId: haul.id, qty: 1, upc: code, name, photo, unitRetail: known ? known.unitRetail : 0 }));
           filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
           searchInput.value = '';
           save();
@@ -1184,6 +1208,166 @@
     setTab('bought');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
+
+  // ---------- Item photos ----------
+  const CAMERA_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+  const photoStore = window.photoStore;
+
+  // A database photo loads straight from its link; one you took is filled in
+  // from this device by showPhotos() once the HTML is on the page.
+  function photoThumbHTML(photo, label) {
+    if (!photo) return `<button type="button" class="b-photo b-photo-empty" data-action="photo" aria-label="Add a photo" title="Add a photo">${CAMERA_ICON}</button>`;
+    const img = IMAGE_RE.test(photo)
+      ? `<img alt="" src="${esc(photo)}" referrerpolicy="no-referrer">`
+      : `<img alt="" data-photo-id="${esc(photo)}">`;
+    return `<button type="button" class="b-photo" data-action="photo" aria-label="Photo of ${esc(label || 'this item')}">${img}</button>`;
+  }
+
+  function showPhotos(root) {
+    $$('img[data-photo-id]', root).forEach(async (img) => {
+      const id = img.dataset.photoId;
+      const photo = await photoStore.get(id);
+      if (img.dataset.photoId !== id) return;
+      if (photo) img.src = photo;
+      // Not on this device yet — it arrives with the next photo sync.
+      const box = img.closest('.b-photo');
+      if (box) box.classList.toggle('b-photo-missing', !photo);
+    });
+  }
+
+  // Ids of the photos you took that items still use.
+  const photoRefs = () => Array.from(new Set(data.items.map((i) => i.photo).filter(validId))).sort();
+
+  // Deletes photos from this device once no item uses them.
+  let photoCleanupTimer = null;
+  function schedulePhotoCleanup() {
+    clearTimeout(photoCleanupTimer);
+    photoCleanupTimer = setTimeout(async () => {
+      const used = new Set(photoRefs());
+      (await photoStore.ids()).forEach((id) => { if (!used.has(id)) photoStore.remove(id); });
+    }, 5000);
+  }
+
+  // One hidden file picker; on phones it offers the camera or the library.
+  const photoInput = document.createElement('input');
+  photoInput.type = 'file';
+  photoInput.accept = 'image/*';
+  photoInput.hidden = true;
+  document.body.appendChild(photoInput);
+  let photoTargets = [];
+
+  // Must run straight from a tap — browsers only open the picker then.
+  function pickPhoto(items) {
+    photoTargets = items;
+    photoInput.value = '';
+    photoInput.click();
+  }
+
+  photoInput.addEventListener('change', async () => {
+    const file = photoInput.files && photoInput.files[0];
+    const targets = photoTargets.filter((it) => data.items.includes(it));
+    photoTargets = [];
+    if (!file || !targets.length) return;
+    try {
+      const photo = await photoStore.shrink(file);
+      const id = newId();
+      const kept = await photoStore.put(id, photo);
+      targets.forEach((it) => { it.photo = id; });
+      save();
+      render();
+      if (!kept) showInvMessage('Photo added, but this phone’s storage is full, so it may not stay after you close the app. It’s kept in your sheet if sync is on.', 'unmet');
+    } catch (err) {
+      showInvMessage(err.message, 'unmet');
+    }
+  });
+
+  let photoDialog = null;
+
+  function openPhoto(items) {
+    const photo = (items.find((it) => it.photo) || {}).photo;
+    if (!photo) { pickPhoto(items); return; }
+    if (!photoDialog) {
+      photoDialog = document.createElement('dialog');
+      photoDialog.className = 'scan-dialog photo-dialog';
+      photoDialog.setAttribute('aria-labelledby', 'photo-title');
+      photoDialog.innerHTML = `
+        <div class="scan-body">
+          <div class="scan-head">
+            <h2 class="scan-title" id="photo-title"></h2>
+            <button type="button" class="scan-close" data-ph="close" aria-label="Close">&times;</button>
+          </div>
+          <img class="photo-big" alt="" referrerpolicy="no-referrer">
+          <p class="photo-source"></p>
+          <div class="product-actions">
+            <button type="button" class="add-button" data-ph="new">Take or choose a new photo</button>
+            <button type="button" class="ghost-button" data-ph="remove">Remove photo</button>
+          </div>
+        </div>
+      `;
+      photoDialog.addEventListener('click', (e) => { if (e.target === photoDialog) photoDialog.close(); });
+      document.body.appendChild(photoDialog);
+    }
+    const name = (items.find((it) => it.name) || {}).name || 'Item photo';
+    $('.scan-title', photoDialog).textContent = name;
+    const img = $('.photo-big', photoDialog);
+    img.removeAttribute('src');
+    delete img.dataset.photoId;
+    if (IMAGE_RE.test(photo)) img.src = photo;
+    else { img.dataset.photoId = photo; showPhotos(photoDialog); }
+    $('.photo-source', photoDialog).textContent = IMAGE_RE.test(photo)
+      ? 'From the free product database. Take your own to replace it.'
+      : items.length > 1 ? `Your photo · used for all ${items.length} trips of this item.` : 'Your photo.';
+    $$('[data-ph]', photoDialog).forEach((btn) => {
+      btn.onclick = () => {
+        photoDialog.close();
+        if (btn.dataset.ph === 'new') pickPhoto(items);
+        else if (btn.dataset.ph === 'remove') {
+          items.forEach((it) => { it.photo = ''; });
+          save();
+          render();
+        }
+      };
+    });
+    photoDialog.showModal();
+  }
+
+  // Photos sync on their own, after the rest: each is uploaded once, and any
+  // this device is missing are downloaded. The sheet drops photos no item
+  // uses whenever purchases are saved.
+  let photoSyncing = false;
+  let photoSyncAgain = false;
+  let lastPhotoRefs = null;
+
+  async function syncPhotos(force = false) {
+    if (!sync || !pulled) return;
+    const refs = photoRefs();
+    if (!force && refs.join() === lastPhotoRefs) return;
+    if (photoSyncing) { photoSyncAgain = true; return; }
+    photoSyncing = true;
+    try {
+      const remote = new Set((await callSheet(sync, 'photos-list')).ids || []);
+      const local = new Set(await photoStore.ids());
+      const up = refs.filter((id) => local.has(id) && !remote.has(id));
+      for (let i = 0; i < up.length; i += 5) {
+        const batch = (await Promise.all(up.slice(i, i + 5).map(async (id) => ({ id, data: await photoStore.get(id) }))))
+          .filter((p) => p.data);
+        if (batch.length) await callSheet(sync, 'photos-put', { photos: batch });
+      }
+      const down = refs.filter((id) => !local.has(id) && remote.has(id));
+      for (let i = 0; i < down.length; i += 10) {
+        const got = (await callSheet(sync, 'photos-get', { ids: down.slice(i, i + 10) })).photos || {};
+        await Promise.all(Object.entries(got).map(([id, photo]) =>
+          (validId(id) && typeof photo === 'string' && photoStore.PHOTO_RE.test(photo) ? photoStore.put(id, photo) : null)));
+      }
+      if (down.length) showPhotos(document);
+      lastPhotoRefs = refs.join();
+    } catch (err) {
+      setSyncStatus('error', `Photo sync error: ${err.message}`);
+    } finally {
+      photoSyncing = false;
+      if (photoSyncAgain) { photoSyncAgain = false; syncPhotos(true); }
+    }
+  }
 
   // ---------- Google Sheet sync ----------
   function loadSync() {
@@ -1307,6 +1491,7 @@
       calcEdited = false;
       if (needPush) await push();
       else setSyncStatus('ok', syncedText());
+      syncPhotos(true);
     } catch (err) {
       setSyncStatus('error', `Sync error: ${err.message}`);
     }
@@ -1320,6 +1505,7 @@
     try {
       await callSheet(sync, 'push', sheetRows());
       setSyncStatus('ok', syncedText());
+      syncPhotos();
     } catch (err) {
       setSyncStatus('error', `Sync error: ${err.message}`);
     } finally {
@@ -1391,6 +1577,7 @@
     render();
     renderSyncPanel();
     await push();
+    syncPhotos(true);
   });
 
   $('#sync-generate').addEventListener('click', async () => {
