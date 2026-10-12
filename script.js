@@ -6,6 +6,9 @@
   const SUN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><line x1="12" y1="2" x2="12" y2="4"></line><line x1="12" y1="20" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"></line><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="4" y2="12"></line><line x1="20" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"></line><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"></line></svg>';
   const MOON_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>';
 
+  const EYE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+  const EYE_OFF_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
+
   // Purely decorative — does not encode anything.
   const BARCODE_SVG = (() => {
     const widths = [3, 1, 2, 1, 4, 1, 2];
@@ -230,6 +233,7 @@
       <div class="item-row-top">
         <input type="text" class="item-name" placeholder="Item name (e.g. Tide Simply)" value="${escapeAttr(data.name || '')}">
         <button type="button" class="remove-item" aria-label="Remove item">&times;</button>
+        <button type="button" class="hide-item"></button>
       </div>
       <div class="item-grid">
         <label>
@@ -278,8 +282,24 @@
       row.remove();
       persistAndRender();
     });
+    // Hiding keeps the item in the list but drops it from every total, so
+    // shoppers can try scenarios without deleting and re-entering items.
+    row.querySelector('.hide-item').addEventListener('click', () => {
+      setItemHidden(row, !row.classList.contains('is-hidden'));
+      persistAndRender();
+    });
+    setItemHidden(row, data.hidden === true);
     itemsList.appendChild(row);
     return row;
+  }
+
+  function setItemHidden(row, hidden) {
+    row.classList.toggle('is-hidden', hidden);
+    const btn = row.querySelector('.hide-item');
+    btn.innerHTML = hidden ? EYE_OFF_ICON : EYE_ICON;
+    btn.setAttribute('aria-pressed', hidden ? 'true' : 'false');
+    btn.setAttribute('aria-label', hidden ? 'Add item back to the total' : 'Hide item from the total');
+    btn.title = hidden ? 'Hidden from the total — tap to add it back' : 'Hide from the total without deleting';
   }
 
   // ---------- Spend & save deals ----------
@@ -299,6 +319,7 @@
     row.dataset.selected = JSON.stringify(Array.isArray(data.items) ? data.items : []);
     const kind = SPEND_KINDS[data.kind] ? data.kind : 'dg';
     const split = data.split === 'even' ? 'even' : 'price';
+    const repeat = data.repeat !== false;
     row.innerHTML = `
       <div class="item-row-top">
         <input type="text" class="spend-name" placeholder="Deal name (e.g. P&G digital coupon)" value="${escapeAttr(data.name || '')}">
@@ -325,6 +346,10 @@
           </select>
         </label>
       </div>
+      <label class="taxable-toggle spend-repeat">
+        <input type="checkbox" class="s-repeat" ${repeat ? 'checked' : ''}>
+        Repeats as you spend more (spend 2× as much, save 2× as much)
+      </label>
       <span class="field-label spend-items-label">Items that count toward it</span>
       <div class="chip-grid s-items"></div>
       <p class="threshold-status spend-status" hidden></p>
@@ -341,7 +366,7 @@
   // which items were ticked. Only rebuilds when the item list actually changed.
   function syncSpendChips() {
     const itemRows = $$('.item-row');
-    const signature = itemRows.map((r, i) => r.dataset.uid + ':' + ($('.item-name', r).value.trim() || `Item ${i + 1}`)).join('|');
+    const signature = itemRows.map((r, i) => r.dataset.uid + ':' + ($('.item-name', r).value.trim() || `Item ${i + 1}`) + (r.classList.contains('is-hidden') ? ':hidden' : '')).join('|');
     $$('.spend-row', spendList).forEach((row) => {
       const container = $('.s-items', row);
       if (container.dataset.sig === signature) return;
@@ -353,7 +378,8 @@
         ? itemRows.map((r, i) => {
             const uid = r.dataset.uid;
             const name = $('.item-name', r).value.trim() || `Item ${i + 1}`;
-            return `<label class="check-chip"><input type="checkbox" value="${uid}" ${selected.has(uid) ? 'checked' : ''}><span>${escapeHtml(name)}</span></label>`;
+            const hidden = r.classList.contains('is-hidden');
+            return `<label class="check-chip${hidden ? ' chip-hidden' : ''}"${hidden ? ' title="Hidden from the total"' : ''}><input type="checkbox" value="${uid}" ${selected.has(uid) ? 'checked' : ''}><span>${escapeHtml(name)}</span></label>`;
           }).join('')
         : '<span class="hint">Add items below first.</span>';
     });
@@ -367,12 +393,13 @@
       threshold: num($('.s-threshold', row).value),
       kind: $('.s-kind', row).value,
       split: $('.s-split', row).value,
+      repeat: $('.s-repeat', row).checked,
       itemUids: $$('.s-items input:checked', row).map((c) => c.value),
     }));
   }
 
   function spendLabel(d) {
-    const offer = `Save $${d.amount.toFixed(2)} on $${d.threshold.toFixed(2)}`;
+    const offer = `Save $${d.amount.toFixed(2)} on $${d.threshold.toFixed(2)}` + (d.times > 1 ? ` (×${d.times})` : '');
     return (d.name ? `${d.name}: ${offer}` : offer) + (SLOT_SUFFIX[d.kind] ?? '');
   }
 
@@ -384,8 +411,8 @@
       const members = items.filter((i) => d.itemUids.includes(i.uid) && i[field] > 0);
       const pool = members.reduce((s, i) => s + i[field], 0);
       if (pool <= 0) return;
-      const total = round2(Math.min(d.amount, pool));
-      d.capped = d.amount > pool;
+      const total = round2(Math.min(d.earned, pool));
+      d.capped = d.earned > pool;
 
       const allocs = new Map();
       if (d.split === 'even') {
@@ -536,6 +563,7 @@
         dg: deals.dg.type !== 'none' ? 0 : num($('.f-dg', row).value),
         mfr: deals.mfr.type !== 'none' ? 0 : num($('.f-mfr', row).value),
         taxable: $('.f-taxable', row).checked,
+        hidden: row.classList.contains('is-hidden'),
         deals,
       };
     });
@@ -595,7 +623,7 @@
 
   function calculate() {
     const basket = getBasketConfig();
-    const rawItems = readItems();
+    const rawItems = readItems().filter((it) => !it.hidden);
     const spendDeals = readSpendDeals();
 
     const shelfItems = rawItems.map((it) => {
@@ -628,6 +656,10 @@
       d.memberCount = members.length;
       d.spend = round2(members.reduce((s, i) => s + i.shelf, 0));
       d.qualifies = d.amount > 0 && d.threshold > 0 && members.length > 0 && d.spend >= d.threshold;
+      // A repeating deal pays out once per full threshold reached —
+      // "$5 off $15" becomes $10 off at $30, $15 off at $45, and so on.
+      d.times = d.qualifies ? (d.repeat ? Math.floor(round2(d.spend / d.threshold) + 1e-9) : 1) : 0;
+      d.earned = round2(d.amount * d.times);
       d.capped = false;
     });
 
@@ -766,7 +798,9 @@
         el.className = 'threshold-status spend-status unmet';
       } else if (d.qualifies) {
         const split = d.memberCount > 1 ? ` split ${d.split === 'even' ? 'evenly' : 'by price'} across ${d.memberCount} items` : '';
-        el.textContent = `Qualified — ${money(d.spend)} spent, ${money(d.amount)} off${split}.` + (d.capped ? ' (Capped at what the items cost.)' : '');
+        const times = d.times > 1 ? ` (${d.times} × ${money(d.amount)})` : '';
+        const next = d.repeat ? ` Spend ${money(round2(d.threshold * (d.times + 1) - d.spend))} more for another ${money(d.amount)} off.` : '';
+        el.textContent = `Qualified — ${money(d.spend)} spent, ${money(d.earned)} off${times}${split}.` + (d.capped ? ' (Capped at what the items cost.)' : '') + next;
         el.className = 'threshold-status spend-status met';
       } else {
         el.textContent = `${money(d.spend)} of ${money(d.threshold)} — spend ${money(d.threshold - d.spend)} more on these items to unlock it.`;
@@ -815,6 +849,7 @@
       if (it.mfrFieldApplied > 0) html += deductionLine('Manufacturer coupon', it.mfrFieldApplied);
       if (it.mfrFieldCapped) html += cappedLine('Manufacturer coupon capped — no overage allowed.');
       html += spendLinesHTML(it, 'mfr');
+      html += percentOffLine(it);
       html += `</div>`;
       return html;
     }).join('');
@@ -840,7 +875,7 @@
         <hr class="rt-rule strong">
         <div class="rt-line total"><span>Total</span><span class="fill"></span><span class="amt">${money(total)}</span></div>
         ${itemCount > 0 ? `<div class="rt-line per-item"><span>Per item</span><span class="fill"></span><span class="amt">${money(round2(total / itemCount))}</span></div>` : ''}
-        ${totalSaved > 0 ? `<div class="rt-line saved"><span>You saved ${money(totalSaved)} off retail</span></div>` : ''}
+        ${totalSaved > 0 ? `<div class="rt-line saved"><span>You saved ${money(totalSaved)} off retail${totalRetail > 0 ? ` (${Math.round((totalSaved / totalRetail) * 100)}%)` : ''}</span></div>` : ''}
       </div>
       <div class="rt-barcode-block">
         ${BARCODE_SVG}
@@ -852,6 +887,15 @@
     stickyTotal.dataset.visible = 'true';
   }
 
+  // How much of the item's retail price all its deals knock off, before tax.
+  // 50% or better is flagged green as a good deal, anything less red.
+  function percentOffLine(it) {
+    const reference = it.lineRetail || it.lineSale;
+    if (reference <= 0) return '';
+    const pct = Math.max(0, Math.round(((reference - it.finalLine) / reference) * 100));
+    const subject = it.qty > 1 ? 'Items are' : 'Item is';
+    return `<div class="rt-line pct-off ${pct >= 50 ? 'good' : 'bad'}"><span>${subject} ${pct}% off</span></div>`;
+  }
   function spendLinesHTML(it, kind) {
     return it.spendLines.filter((l) => l.kind === kind).map((l) => deductionLine(l.label, l.amount)).join('');
   }
@@ -875,12 +919,12 @@
       customThreshold: customThreshold.value,
       spendDeals: readSpendDeals().map((d) => ({
         name: d.name, amount: $('.s-amount', d.el).value, threshold: $('.s-threshold', d.el).value,
-        kind: d.kind, split: d.split, items: d.itemUids,
+        kind: d.kind, split: d.split, repeat: d.repeat, items: d.itemUids,
       })),
       items: readItems().map((it) => ({
         uid: it.uid, name: it.name, qty: it.qty, retail: $('.f-retail', it.el).value, sale: $('.f-sale', it.el).value,
         dg: $('.f-dg', it.el).value, mfr: $('.f-mfr', it.el).value,
-        taxable: it.taxable, deals: it.deals,
+        taxable: it.taxable, hidden: it.hidden, deals: it.deals,
       })),
     };
   }
