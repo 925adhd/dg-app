@@ -155,7 +155,15 @@
   <div id="view-bought" role="tabpanel" aria-labelledby="tab-btn-bought" hidden>
     <section class="bought">
 
-      <input type="search" id="bought-search" class="bought-search" placeholder="Search items, locations, trips" aria-label="Search purchases" autocomplete="off">
+      <div class="bought-search-row">
+        <input type="search" id="bought-search" class="bought-search" placeholder="Search items, trips, barcodes" aria-label="Search purchases" autocomplete="off">
+        <button type="button" class="bought-scan" id="bought-scan" aria-label="Scan a barcode to find an item" title="Scan a barcode to find an item">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>
+            <path d="M7 8v8M10 8v8M13 8v8M16.5 8v8"/>
+          </svg>
+        </button>
+      </div>
 
       <div class="stat-grid" id="bought-summary" aria-live="polite"></div>
 
@@ -264,6 +272,7 @@
 
 <script src="dialog.js"></script>
 <script src="script.js"></script>
+<script src="scanner.js"></script>
 <script src="bought.js"></script>
 </body>
 </html>

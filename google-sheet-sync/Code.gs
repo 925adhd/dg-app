@@ -52,7 +52,7 @@ const SHEET_CALC = "Calculator";
 // Editable columns — the only ones read back into the app.
 const HAUL_COLUMNS = ["id", "date", "store", "name", "notes"];
 const ITEM_COLUMNS = [
-  "id", "haulId", "name", "qty", "unitRetail", "totalPaid", "taxPaid", "resalePrice",
+  "id", "haulId", "name", "upc", "qty", "unitRetail", "totalPaid", "taxPaid", "resalePrice",
   "soldQty", "soldTotal", "fees", "soldDate", "platform", "location", "notes"
 ];
 // Read-only columns the app computes for you.
@@ -64,6 +64,8 @@ const NUMERIC_COLUMNS = [
   "itemCount", "retail", "paid", "tax", "saved", "profit", "unitCost"
 ];
 const DATE_COLUMNS = ["date", "soldDate"];
+// Stored as text so a barcode's leading zeros aren't dropped.
+const TEXT_COLUMNS = ["upc"];
 
 const MAX_ROWS = 5000;
 const MAX_TEXT = 200;
@@ -195,6 +197,7 @@ function cellValue(value, column) {
     return isFinite(n) ? n : "";
   }
   let text = String(value).slice(0, MAX_TEXT);
+  if (TEXT_COLUMNS.indexOf(column) !== -1) return text ? "'" + text : "";
   if (DATE_COLUMNS.indexOf(column) !== -1 && !/^\d{4}-\d{2}-\d{2}$/.test(text)) return "";
   // A leading apostrophe makes Sheets store the cell as plain text, so
   // something like "=IMPORTXML(...)" typed as an item name can't run.

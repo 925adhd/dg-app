@@ -102,6 +102,8 @@
   // hostile values can't break the page or sneak markup in.
   const cleanText = (v) => (v === undefined || v === null ? '' : String(v).slice(0, MAX_TEXT));
   const cleanMoney = (v) => Math.max(0, round2(num(v)));
+  // Barcodes are kept as digit strings so leading zeros survive.
+  const cleanUpc = (v) => (v === undefined || v === null ? '' : String(v).replace(/\D/g, '').slice(0, 14));
 
   function cleanHaul(h) {
     if (!h || typeof h !== 'object') return null;
@@ -122,6 +124,7 @@
       id: validId(i.id) ? i.id : newId(),
       haulId: i.haulId,
       name: cleanText(i.name),
+      upc: cleanUpc(i.upc),
       qty,
       unitRetail,
       totalPaid: cleanMoney(i.totalPaid),
@@ -315,9 +318,10 @@
           ${field('Paid total (with tax)', 'totalPaid', blankIfZero(it.totalPaid))}
           ${field('Resell at (each)', 'resalePrice', blankIfZero(it.resalePrice))}
         </div>
-        <div class="b-grid b-grid-2">
+        <div class="b-grid b-grid-3">
           <label><span class="field-label">Location</span><input type="text" data-f="location" placeholder="e.g. Bin 3" maxlength="${MAX_TEXT}" value="${esc(it.location)}"></label>
           <label><span class="field-label">Notes</span><input type="text" data-f="notes" placeholder="e.g. dented box" maxlength="${MAX_TEXT}" value="${esc(it.notes)}"></label>
+          <label><span class="field-label">Barcode</span><input type="text" data-f="upc" inputmode="numeric" placeholder="Scan or type" maxlength="14" autocomplete="off" value="${esc(it.upc)}"></label>
         </div>
         <details class="b-sale"${it.soldQty > 0 ? ' open' : ''}>
           <summary>Sale info</summary>
@@ -346,14 +350,17 @@
         </div>
         <p class="haul-totals">${esc(haulTotalsText(h.id))}</p>
         <div class="haul-items">${items.map(itemHTML).join('')}</div>
-        <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
+        <div class="haul-add">
+          <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
+          <button type="button" class="add-button add-button-secondary" data-action="scan-items">Scan items</button>
+        </div>
       </article>`;
   }
 
   // One search box at the top of the tab drives both views.
   const searchQuery = () => searchInput.value.trim().toLowerCase();
   const has = (text, q) => String(text || '').toLowerCase().includes(q);
-  const itemSearchMatch = (it, q) => !q || has(it.name, q) || has(it.location, q) || has(it.notes, q) || has(it.platform, q);
+  const itemSearchMatch = (it, q) => !q || has(it.name, q) || has(it.location, q) || has(it.notes, q) || has(it.platform, q) || has(it.upc, q);
 
   function renderHauls() {
     const mode = filterMode();
@@ -670,6 +677,7 @@
     else if (f === 'soldQty') it.soldQty = Math.max(0, Math.round(num(el.value)));
     else if (NUMBER_FIELDS.has(f)) it[f] = cleanMoney(el.value);
     else if (f === 'soldDate') it.soldDate = DATE_RE.test(el.value) ? el.value : '';
+    else if (f === 'upc') it.upc = cleanUpc(el.value);
     else it[f] = cleanText(el.value);
     it.soldQty = Math.min(it.soldQty, it.qty);
 
@@ -704,6 +712,8 @@
       render();
       const added = $$(`.haul[data-haul="${CSS.escape(haulId)}"] .b-item`).pop();
       if (added) $('.item-name', added).focus();
+    } else if (btn.dataset.action === 'scan-items') {
+      scanIntoHaul(haulId);
     } else if (btn.dataset.action === 'delete-item') {
       const id = btn.closest('.b-item').dataset.item;
       const it = data.items.find((i) => i.id === id);
@@ -741,6 +751,144 @@
     setView('trips');
     const el = $(`.haul[data-haul="${CSS.escape(haul.id)}"] .item-name`);
     if (el) el.focus();
+  });
+
+  // ---------- Barcode scanning ----------
+  // Scanned codes are saved on each item. A product's name comes from your own
+  // earlier purchases first, then from the free Open Food Facts databases
+  // (food, household and beauty), which only ever see the barcode number.
+  const NAMES_KEY = 'therealtotal:upc-names';
+  const MAX_NAMES = 1000;
+  const LOOKUP_HOSTS = ['world.openfoodfacts.org', 'world.openproductsfacts.org', 'world.openbeautyfacts.org'];
+
+  let lookedUpNames = {};
+  try {
+    const raw = JSON.parse(localStorage.getItem(NAMES_KEY));
+    if (raw && typeof raw === 'object') {
+      Object.entries(raw).forEach(([code, name]) => {
+        if (/^\d{6,14}$/.test(code) && typeof name === 'string' && name) lookedUpNames[code] = cleanText(name);
+      });
+    }
+  } catch (e) { lookedUpNames = {}; }
+
+  function rememberName(code, name) {
+    delete lookedUpNames[code];
+    lookedUpNames[code] = name;
+    const codes = Object.keys(lookedUpNames);
+    codes.slice(0, Math.max(0, codes.length - MAX_NAMES)).forEach((c) => delete lookedUpNames[c]);
+    try { localStorage.setItem(NAMES_KEY, JSON.stringify(lookedUpNames)); } catch (e) { /* storage unavailable */ }
+  }
+
+  // "Gain" + "Detergent" + "92 oz" -> "Gain Detergent 92 oz".
+  function productName(p) {
+    const clean = (v) => String(v || '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
+    const brand = clean(String(p.brands || '').split(',')[0]);
+    const name = clean(p.product_name);
+    const size = clean(p.quantity);
+    let full = name ? (brand && !name.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${name}` : name) : brand;
+    if (full && size && !full.toLowerCase().includes(size.toLowerCase())) full += ` ${size}`;
+    return full.slice(0, MAX_TEXT);
+  }
+
+  // Resolves to { name } when found, { name: '' } when no database has it,
+  // or { offline: true } when none of them could be reached.
+  async function lookUpOnline(code) {
+    if (lookedUpNames[code]) return { name: lookedUpNames[code] };
+    let answered = false;
+    const tries = LOOKUP_HOSTS.map(async (host) => {
+      const ctrl = new AbortController();
+      const stopper = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const res = await fetch(`https://${host}/api/v2/product/${code.padStart(13, '0')}.json?fields=product_name,brands,quantity`, {
+          credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', signal: ctrl.signal,
+        });
+        answered = true;
+        const body = await res.json();
+        const name = body && body.status === 1 && body.product ? productName(body.product) : '';
+        if (!name) throw new Error('not found');
+        return name;
+      } finally {
+        clearTimeout(stopper);
+      }
+    });
+    try {
+      const name = await Promise.any(tries);
+      rememberName(code, name);
+      return { name };
+    } catch (e) {
+      return answered ? { name: '' } : { offline: true };
+    }
+  }
+
+  // The newest item you've saved with this barcode, to reuse its name and price.
+  const knownItem = (code, except) => data.items.slice().reverse().find((i) => i !== except && i.upc === code && i.name);
+
+  async function addScannedItem(haulId, code) {
+    if (!data.hauls.some((h) => h.id === haulId)) return { text: 'That trip is gone.', tone: 'unmet', close: true };
+    const same = data.items.find((i) => i.haulId === haulId && i.upc === code);
+    if (same) {
+      same.qty += 1;
+      save();
+      render();
+      return { text: `${same.name || code} — now ${same.qty} in this trip.`, tone: 'met' };
+    }
+    // A new trip starts with one empty row; scanning replaces it.
+    const blank = (i) => i.haulId === haulId && !i.name && !i.upc && !i.unitRetail && !i.totalPaid && !i.soldQty && !i.location && !i.notes;
+    data.items = data.items.filter((i) => !blank(i));
+    const known = knownItem(code);
+    const it = cleanItem({
+      haulId, qty: 1, upc: code,
+      name: known ? known.name : lookedUpNames[code] || '',
+      unitRetail: known ? known.unitRetail : 0,
+    });
+    data.items.push(it);
+    save();
+    render();
+    if (it.name) return { text: `Added ${it.name}${known && known.unitRetail ? ` (retail ${money(known.unitRetail)})` : ''}.`, tone: 'met' };
+
+    const found = await lookUpOnline(code);
+    if (found.name && data.items.includes(it) && !it.name) {
+      it.name = cleanText(found.name);
+      save();
+      render();
+      return { text: `Added ${it.name}.`, tone: 'met' };
+    }
+    return {
+      text: found.offline
+        ? `Added ${code}. Couldn’t look up its name (no connection?) — type it in after.`
+        : `Added ${code}. It’s not in the free database, so type its name in after.`,
+      tone: 'unmet',
+    };
+  }
+
+  function scanIntoHaul(haulId) {
+    window.openScanner({
+      title: 'Scan items into this trip',
+      hint: 'Scan each item. Scanning the same one again adds 1 more. Tap Done when you’re finished.',
+      onCode: (code) => addScannedItem(haulId, code),
+      onClose: () => {
+        // Jump to the first item that still needs a name typed in.
+        const blank = $(`.haul[data-haul="${CSS.escape(haulId)}"] .item-name[value=""]`);
+        if (blank) blank.scrollIntoView({ block: 'center' });
+      },
+    });
+  }
+
+  $('#bought-scan').addEventListener('click', () => {
+    window.openScanner({
+      title: 'Find an item by barcode',
+      hint: 'Scan something you bought to find it.',
+      onCode: (code) => {
+        searchInput.value = code;
+        render();
+        const n = data.items.filter((i) => i.upc === code).length;
+        if (!n) {
+          showInvMessage(`Nothing saved with barcode ${code} yet.`, 'unmet');
+          return { text: `Nothing saved with barcode ${code} yet.`, tone: 'unmet', close: false };
+        }
+        return { close: true };
+      },
+    });
   });
 
   // ---------- Receipt -> Bought ----------
