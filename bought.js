@@ -936,7 +936,8 @@
   // Shares a receipt's tax across a haul's items by price, leaving out the
   // share that belongs to whatever was kept for personal use. Works from each
   // item's price before tax, so running it again replaces the tax rather
-  // than adding it twice.
+  // than adding it twice. When everything was free (a $0 subtotal), the tax
+  // is split evenly by quantity instead.
   function spreadTax(haulId, haulEl) {
     const items = itemsOf(haulId);
     const receiptTax = cleanMoney($('.haul-receipt-tax', haulEl).value);
@@ -947,19 +948,21 @@
       const el = $(`.haul[data-haul="${CSS.escape(haulId)}"] .haul-receipt-note`);
       if (el) { el.textContent = text; el.className = `haul-receipt-note ${tone}`; }
     };
-    if (!subtotal) {
-      note('Enter each item’s Paid total (before tax) first.', 'bad');
+    if (!items.length) {
+      note('Add this haul’s items first.', 'bad');
       return;
     }
-    const tax = round2(receiptTax * (subtotal / (subtotal + kept)));
+    const weights = subtotal ? bases : items.map((it) => it.qty);
+    const weightTotal = weights.reduce((s, w) => s + w, 0);
+    const tax = round2(receiptTax * (subtotal + kept ? subtotal / (subtotal + kept) : 1));
     items.forEach((it, n) => {
-      it.taxPaid = round2(tax * (bases[n] / subtotal));
+      it.taxPaid = round2(tax * (weights[n] / weightTotal));
       it.totalPaid = round2(bases[n] + it.taxPaid);
     });
     // Rounding pennies land on the priciest item so the shares add up exactly.
     const off = round2(tax - items.reduce((s, it) => s + it.taxPaid, 0));
     if (off) {
-      const top = items.reduce((a, b, n) => (bases[n] > bases[items.indexOf(a)] ? b : a), items[0]);
+      const top = items.reduce((a, b, n) => (weights[n] > weights[items.indexOf(a)] ? b : a), items[0]);
       top.taxPaid = round2(top.taxPaid + off);
       top.totalPaid = round2(top.totalPaid + off);
     }
