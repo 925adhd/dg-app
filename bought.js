@@ -444,6 +444,7 @@
         <div class="inv-head">
           <span class="inv-name">${esc(g.name)}</span>
           <span class="inv-onhand">${g.onHand} on hand</span>
+          <button type="button" class="remove-item" data-action="remove-stock" aria-label="Remove from inventory">&times;</button>
         </div>
         <div class="b-foot">${invFootHTML(g)}</div>
         <div class="b-grid b-grid-2">
@@ -523,7 +524,38 @@
     renderSummary();
   });
 
+  // Takes a product's unsold units out of stock. Units already sold stay, so
+  // recorded sales and profit don't change; a lot with no sales is deleted.
+  async function removeStock(g) {
+    const trips = g.lots.length;
+    if (!await window.appConfirm({
+      title: `Remove ${g.onHand} × ${g.name}?`,
+      message: `This takes ${g.onHand === 1 ? 'it' : 'them'} out of your purchases${trips > 1 ? ` (from ${trips} trips)` : ''}. Any sales you've recorded for it are kept.`,
+      confirmText: 'Remove', cancelText: 'Keep', danger: true,
+    })) return;
+    const lots = new Set(g.lots);
+    data.items = data.items.filter((it) => !lots.has(it) || it.soldQty > 0);
+    // Shrink what was paid along with the count, so the sold units keep
+    // their cost each and the profit on them doesn't move.
+    g.lots.forEach((it) => {
+      if (it.soldQty <= 0 || it.soldQty >= it.qty) return;
+      const share = it.soldQty / it.qty;
+      it.totalPaid = round2(it.totalPaid * share);
+      it.taxPaid = round2(it.taxPaid * share);
+      it.qty = it.soldQty;
+    });
+    save();
+    render();
+    showInvMessage(`Removed ${g.onHand} × ${g.name} from inventory.`, 'met');
+  }
+
   invList.addEventListener('click', (e) => {
+    const removeBtn = e.target.closest('[data-action="remove-stock"]');
+    if (removeBtn) {
+      const g = invGroups[Number(removeBtn.closest('.inv-item').dataset.group)];
+      if (g) removeStock(g);
+      return;
+    }
     const btn = e.target.closest('[data-action="record-sale"]');
     if (!btn) return;
     const card = btn.closest('.inv-item');

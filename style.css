@@ -1274,11 +1274,11 @@ select:focus, input:focus {
 .inv-item { background: var(--paper); }
 .inv-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
-.inv-name { font-weight: 600; font-size: 1.02rem; overflow-wrap: anywhere; }
+.inv-name { flex: 1; font-weight: 600; font-size: 1.02rem; overflow-wrap: anywhere; }
 .inv-onhand {
   flex: 0 0 auto;
   font-family: var(--font-tape);
