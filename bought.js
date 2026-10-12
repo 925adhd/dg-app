@@ -71,11 +71,11 @@
     };
   }
 
-  function loadPricing() {
+  function storedPricing() {
     try { return cleanPricing(JSON.parse(localStorage.getItem(PRICING_KEY)) || {}); } catch (e) { return { ...DEFAULT_PRICING }; }
   }
 
-  let pricing = loadPricing();
+  let pricing = storedPricing();
   const boothPrice = (unitRetail) => round2(unitRetail * (1 - pricing.pctOff / 100));
   const afterCommission = (amount) => amount * (1 - pricing.commission / 100);
 
@@ -762,6 +762,27 @@
     });
     try { localStorage.setItem(PRICING_KEY, JSON.stringify(pricing)); } catch (e) { /* storage unavailable */ }
     renderPricingStatus();
+    render();
+    if (!pulled) calcEdited = true;
+    scheduleSync();
+  }
+
+  function fillPricingInputs() {
+    pricingPct.value = pricing.pctOff;
+    pricingCommission.value = pricing.commission || '';
+    pricingRent.value = pricing.rent || '';
+    pricingRentPeriod.value = pricing.rentPeriod;
+    pricingRentStart.value = pricing.rentStart;
+    renderPricingStatus();
+  }
+
+  // Booth pricing that came from the Google Sheet.
+  function loadPricing(p) {
+    const next = cleanPricing(p);
+    if (JSON.stringify(next) === JSON.stringify(pricing)) return;
+    pricing = next;
+    try { localStorage.setItem(PRICING_KEY, JSON.stringify(pricing)); } catch (e) { /* storage unavailable */ }
+    fillPricingInputs();
     render();
   }
   [pricingPct, pricingCommission, pricingRent, pricingRentPeriod, pricingRentStart]
@@ -1720,7 +1741,7 @@
   // ---------- Calculator build ----------
   // The calculator (script.js) owns its working copy and saved scenarios;
   // the sync just carries them to and from the sheet's "Calculator" tab as
-  // one JSON string.
+  // one JSON string. Booth pricing rides along in the same string.
   const calc = window.calcSync;
   // Changed here before the first pull finished, so it beats the sheet's copy.
   let calcEdited = false;
@@ -1738,8 +1759,17 @@
   }
 
   // Skips the reload when nothing changed, so the page doesn't jump.
-  function loadBuild(build) {
+  function loadBuild({ pricing: remotePricing, ...build }) {
+    if (remotePricing && typeof remotePricing === 'object') loadPricing(remotePricing);
     if (JSON.stringify(calc.get()) !== JSON.stringify(build)) calc.load(build);
+  }
+
+  // One side's calculator with the other side's saved scenarios added, so
+  // connecting a device never throws a saved scenario away.
+  function withScenarios(base, other) {
+    const mine = Array.isArray(base.scenarios) ? base.scenarios : [];
+    const theirs = Array.isArray(other.scenarios) ? other.scenarios : [];
+    return { ...base, scenarios: [...mine, ...theirs.filter((sc) => !mine.some((m) => m.id === sc.id))] };
   }
 
   function setSyncStatus(state, text) {
@@ -1796,7 +1826,7 @@
         const c = itemCalc(it);
         return { ...it, unitCost: r2(c.unitCost), status: STATUS_LABELS[c.status], profit: r2(c.profit) };
       }),
-      calc: JSON.stringify(calc.get()),
+      calc: JSON.stringify({ ...calc.get(), pricing }),
     };
   }
 
@@ -1820,6 +1850,8 @@
       }
       if (build && !calcEdited) loadBuild(build);
       else if (build || !calc.isBlank()) needPush = true;
+      // A sheet from before pricing synced gets this device's pricing.
+      if (build && !build.pricing) needPush = true;
       calcEdited = false;
       if (needPush) await push();
       else setSyncStatus('ok', syncedText());
@@ -1883,11 +1915,11 @@
       // silently overwriting either side.
       const describe = (trips, hasBuild) => [
         trips ? `${trips} haul${trips === 1 ? '' : 's'}` : '',
-        hasBuild ? 'calculator scenarios' : '',
+        hasBuild ? 'a calculator' : '',
       ].filter(Boolean).join(' and ');
       const choice = await window.appChoose({
         title: 'Your sheet already has data',
-        message: `The sheet has ${describe(remote.hauls.length, !!build)} and this device has ${describe(data.hauls.length, deviceHasBuild)}. Which should be kept? The other one gets replaced.`,
+        message: `The sheet has ${describe(remote.hauls.length, !!build)} and this device has ${describe(data.hauls.length, deviceHasBuild)}. Which should be kept? The other one gets replaced${build && deviceHasBuild ? ', except saved scenarios — those from both are kept' : ''}.`,
         confirmText: 'Use the sheet’s data',
         altText: 'Keep this device’s data',
         cancelText: 'Don’t connect',
@@ -1897,7 +1929,8 @@
     }
     // Anything only one side has is kept either way.
     if (remote.hauls.length && (preferSheet || !data.hauls.length)) data = remote;
-    if (build && (preferSheet || !deviceHasBuild)) loadBuild(build);
+    if (build && (preferSheet || !deviceHasBuild)) loadBuild(withScenarios(build, calc.get()));
+    else if (build) loadBuild(withScenarios(calc.get(), build));
     sync = conn;
     pulled = true;
     calcEdited = false;
@@ -1962,12 +1995,7 @@
   let startTab = 'calc';
   try { startTab = localStorage.getItem(TAB_KEY) || 'calc'; } catch (e) { /* storage unavailable */ }
   setTab(startTab);
-  pricingPct.value = pricing.pctOff;
-  pricingCommission.value = pricing.commission || '';
-  pricingRent.value = pricing.rent || '';
-  pricingRentPeriod.value = pricing.rentPeriod;
-  pricingRentStart.value = pricing.rentStart;
-  renderPricingStatus();
+  fillPricingInputs();
   let startView = 'trips';
   try { startView = localStorage.getItem(VIEW_KEY) || 'trips'; } catch (e) { /* storage unavailable */ }
   setView(startView);
