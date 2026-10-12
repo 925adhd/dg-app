@@ -1284,6 +1284,33 @@ select:focus, input:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+.cam-view {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  max-height: 58vh;
+  margin: 0 auto;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cam-view video, .cam-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam-preview { object-fit: contain; background: #000; }
+.cam-status { margin-top: 10px; }
+.cam-row { display: flex; justify-content: center; margin-top: 14px; }
+.cam-shutter {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 4px solid var(--dg-black);
+  background: var(--dg-yellow);
+  box-shadow: inset 0 0 0 4px #FFFFFF;
+  cursor: pointer;
+}
+.cam-shutter:disabled { opacity: 0.4; cursor: default; }
+.cam-shutter:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.cam-review { margin-top: 14px; }
+.cam-library { display: block; width: 100%; margin-top: 10px; color: var(--ink); font-weight: 600; }
+.cam-library:hover { color: var(--ink); border-color: var(--ink); background: var(--tag-bg); }
 .photo-source { margin: 10px 0 0; font-size: 0.85rem; color: var(--muted); }
 .product-card { display: flex; gap: 14px; align-items: flex-start; }
 .product-img {

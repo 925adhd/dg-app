@@ -1248,38 +1248,26 @@
     }, 5000);
   }
 
-  // One hidden file picker; on phones it offers the camera or the library.
-  const photoInput = document.createElement('input');
-  photoInput.type = 'file';
-  photoInput.accept = 'image/*';
-  photoInput.hidden = true;
-  document.body.appendChild(photoInput);
-  let photoTargets = [];
-
-  // Must run straight from a tap — browsers only open the picker then.
-  function pickPhoto(items) {
-    photoTargets = items;
-    photoInput.value = '';
-    photoInput.click();
-  }
-
-  photoInput.addEventListener('change', async () => {
-    const file = photoInput.files && photoInput.files[0];
-    const targets = photoTargets.filter((it) => data.items.includes(it));
-    photoTargets = [];
-    if (!file || !targets.length) return;
+  // Opens the in-app camera (with "Choose from photos") and puts the photo
+  // on every item given.
+  async function pickPhoto(items) {
+    const name = (items.find((it) => it.name) || {}).name;
+    let photo;
     try {
-      const photo = await photoStore.shrink(file);
-      const id = newId();
-      const kept = await photoStore.put(id, photo);
-      targets.forEach((it) => { it.photo = id; });
-      save();
-      render();
-      if (!kept) showInvMessage('Photo added, but this phone’s storage is full, so it may not stay after you close the app. It’s kept in your sheet if sync is on.', 'unmet');
+      photo = await photoStore.capture(name ? `Photo of ${name}` : 'Take a photo');
     } catch (err) {
       showInvMessage(err.message, 'unmet');
+      return;
     }
-  });
+    const targets = items.filter((it) => data.items.includes(it));
+    if (!photo || !targets.length) return;
+    const id = newId();
+    const kept = await photoStore.put(id, photo);
+    targets.forEach((it) => { it.photo = id; });
+    save();
+    render();
+    if (!kept) showInvMessage('Photo added, but this phone’s storage is full, so it may not stay after you close the app. It’s kept in your sheet if sync is on.', 'unmet');
+  }
 
   let photoDialog = null;
 
@@ -1299,7 +1287,7 @@
           <img class="photo-big" alt="" referrerpolicy="no-referrer">
           <p class="photo-source"></p>
           <div class="product-actions">
-            <button type="button" class="add-button" data-ph="new">Take or choose a new photo</button>
+            <button type="button" class="add-button" data-ph="new">Take a new photo</button>
             <button type="button" class="ghost-button" data-ph="remove">Remove photo</button>
           </div>
         </div>
