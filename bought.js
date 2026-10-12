@@ -122,12 +122,14 @@
   }
 
   function cleanItem(i) {
-    if (!i || typeof i !== 'object' || !validId(i.haulId)) return null;
+    // An empty haulId is an item added straight to inventory, not from a trip.
+    const loose = i && (i.haulId === undefined || i.haulId === null || i.haulId === '');
+    if (!i || typeof i !== 'object' || !(loose || validId(i.haulId))) return null;
     const qty = Math.max(1, Math.round(num(i.qty) || 1));
     const unitRetail = cleanMoney(i.unitRetail);
     return {
       id: validId(i.id) ? i.id : newId(),
-      haulId: i.haulId,
+      haulId: loose ? '' : i.haulId,
       name: cleanText(i.name),
       upc: cleanUpc(i.upc),
       photo: cleanPhoto(i.photo),
@@ -156,7 +158,7 @@
     const itemIds = new Set();
     const items = (Array.isArray(src.items) ? src.items.slice(0, MAX_ROWS) : [])
       .map(cleanItem)
-      .filter((i) => i && haulIds.has(i.haulId) && !itemIds.has(i.id) && itemIds.add(i.id));
+      .filter((i) => i && (i.haulId === '' || haulIds.has(i.haulId)) && !itemIds.has(i.id) && itemIds.add(i.id));
     return { hauls, items };
   }
 
@@ -345,6 +347,22 @@
       </div>`;
   }
 
+  // Items added straight to inventory, with no trip.
+  function looseHTML(items) {
+    return `
+      <article class="haul haul-loose" data-haul="">
+        <div class="haul-head">
+          <h3 class="haul-loose-title">Not from a trip</h3>
+        </div>
+        <p class="haul-totals">${esc(haulTotalsText(''))}</p>
+        <div class="haul-items">${items.map(itemHTML).join('')}</div>
+        <div class="haul-add">
+          <button type="button" class="add-button add-button-secondary" data-action="add-item">+ Add item</button>
+          <button type="button" class="add-button add-button-secondary" data-action="scan-items">Scan items</button>
+        </div>
+      </article>`;
+  }
+
   function haulHTML(h, items) {
     return `
       <article class="haul" data-haul="${esc(h.id)}">
@@ -374,7 +392,8 @@
     const mode = filterMode();
     const q = searchQuery();
     const sorted = data.hauls.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-    const html = sorted.map((h) => {
+    const loose = itemsOf('').filter((it) => itemMatches(it, mode) && itemSearchMatch(it, q));
+    const html = (loose.length ? looseHTML(loose) : '') + sorted.map((h) => {
       const all = itemsOf(h.id);
       // A search that matches the trip itself (name or store) shows the whole trip.
       const tripHit = q && (has(h.name, q) || has(h.store, q));
@@ -383,7 +402,7 @@
       if (!shown.length && (q || mode !== 'all' || all.length)) return '';
       return haulHTML(h, shown);
     }).join('');
-    haulList.innerHTML = html || `<p class="empty-note">${data.hauls.length
+    haulList.innerHTML = html || `<p class="empty-note">${data.hauls.length || data.items.length
       ? (q ? 'Nothing matches that search.' : 'Nothing matches this filter.')
       : 'No purchases yet. Build a receipt on the Calculator tab and tap “Save to Bought”, or add a purchase by hand.'}</p>`;
     showPhotos(haulList);
@@ -445,7 +464,7 @@
   function invGroupHTML(g, index) {
     const lotLines = g.lots.map((it) => {
       const c = itemCalc(it);
-      return `<li>${esc(formatDate(g.haulDate.get(it.haulId)))} · ${c.left} left · ${money(c.unitCost)} each${it.location ? ` · ${esc(it.location)}` : ''}${it.notes ? ` · ${esc(it.notes)}` : ''}</li>`;
+      return `<li>${it.haulId ? esc(formatDate(g.haulDate.get(it.haulId))) : 'No trip'} · ${c.left} left · ${money(c.unitCost)} each${it.location ? ` · ${esc(it.location)}` : ''}${it.notes ? ` · ${esc(it.notes)}` : ''}</li>`;
     }).join('');
     const field = (label, cls, attrs, type = 'number') => `<label><span class="field-label">${label}</span><input type="${type}" class="${cls}" ${attrs}></label>`;
     return `
@@ -707,9 +726,10 @@
     const haulEl = el.closest('.haul');
     if (!haulEl) return;
     const haul = data.hauls.find((h) => h.id === haulEl.dataset.haul);
-    if (!haul) return;
+    if (!haul && haulEl.dataset.haul !== '') return;
 
     if (el.dataset.h) {
+      if (!haul) return;
       const v = el.dataset.h === 'date' ? (DATE_RE.test(el.value) ? el.value : haul.date) : cleanText(el.value);
       haul[el.dataset.h] = v;
       save();
@@ -732,7 +752,7 @@
 
     save();
     $('.b-foot', itemEl).innerHTML = itemFootHTML(it);
-    $('.haul-totals', haulEl).textContent = haulTotalsText(haul.id);
+    $('.haul-totals', haulEl).textContent = haulTotalsText(haulEl.dataset.haul);
     renderSummary();
   });
 
@@ -792,6 +812,16 @@
   });
 
   filterInputs.forEach((r) => r.addEventListener('change', renderHauls));
+
+  $('#add-loose').addEventListener('click', () => {
+    data.items.push(cleanItem({ haulId: '', qty: 1 }));
+    filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
+    searchInput.value = '';
+    save();
+    setView('trips');
+    const el = $$('.haul[data-haul=""] .item-name').pop();
+    if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); }
+  });
 
   addHaulBtn.addEventListener('click', () => {
     const haul = cleanHaul({ date: today(), store: 'Dollar General' });
@@ -884,7 +914,7 @@
 
   // `onAdded` runs as soon as the item is in the trip, before any online lookup.
   async function addScannedItem(haulId, code, onAdded = () => {}) {
-    if (!data.hauls.some((h) => h.id === haulId)) return { text: 'That trip is gone.', tone: 'unmet', close: true };
+    if (haulId !== '' && !data.hauls.some((h) => h.id === haulId)) return { text: 'That trip is gone.', tone: 'unmet', close: true };
     const same = data.items.find((i) => i.haulId === haulId && i.upc === code);
     if (same) {
       same.qty += 1;
@@ -894,7 +924,7 @@
       return { text: `${same.name || code} — now ${same.qty} in this trip.`, tone: 'met' };
     }
     // A new trip starts with one empty row; scanning replaces it.
-    const blank = (i) => i.haulId === haulId && !i.name && !i.upc && !i.unitRetail && !i.totalPaid && !i.soldQty && !i.location && !i.notes;
+    const blank = (i) => i.haulId === haulId && haulId !== '' && !i.name && !i.upc && !i.unitRetail && !i.totalPaid && !i.soldQty && !i.location && !i.notes;
     data.items = data.items.filter((i) => !blank(i));
     const known = knownItem(code);
     const it = cleanItem({
@@ -1043,6 +1073,7 @@
         <div class="product-actions">
           <button type="button" class="add-button" data-p="show">Show my items</button>
           <button type="button" class="add-button add-button-secondary" data-p="add">Add to a new purchase</button>
+          <button type="button" class="add-button add-button-secondary" data-p="add-loose">Add without a trip</button>
           <button type="button" class="ghost-button" data-p="again">Scan another</button>
         </div>
       </div>
@@ -1103,15 +1134,19 @@
           searchInput.value = code;
           render();
           (viewMode() === 'inventory' ? invList : haulList).scrollIntoView({ block: 'start' });
-        } else if (action === 'add') {
-          const haul = cleanHaul({ date: today(), store: 'Dollar General' });
-          data.hauls.unshift(haul);
-          data.items.push(cleanItem({ haulId: haul.id, qty: 1, upc: code, name, photo, unitRetail: known ? known.unitRetail : 0 }));
+        } else if (action === 'add' || action === 'add-loose') {
+          let haulId = '';
+          if (action === 'add') {
+            const haul = cleanHaul({ date: today(), store: 'Dollar General' });
+            data.hauls.unshift(haul);
+            haulId = haul.id;
+          }
+          data.items.push(cleanItem({ haulId, qty: 1, upc: code, name, photo, unitRetail: known ? known.unitRetail : 0 }));
           filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
           searchInput.value = '';
           save();
           setView('trips');
-          const el = $(`.haul[data-haul="${CSS.escape(haul.id)}"] .b-item`);
+          const el = $$(`.haul[data-haul="${CSS.escape(haulId)}"] .b-item`).pop();
           if (el) el.scrollIntoView({ block: 'center' });
         } else if (action === 'again') {
           scanFromSearch('lookup');
@@ -1124,18 +1159,27 @@
   // The barcode icon in the search bar: look products up, or add them to a
   // new purchase. The last mode used is remembered on this device.
   const SCAN_MODE_KEY = 'therealtotal:scan-mode';
+  const SCAN_INTO_KEY = 'therealtotal:scan-into';
+  const ADD_HINT = 'Scan each item. Use + for more than one of the same thing. Tap × when you’re finished.';
   const SCAN_MODES = {
     lookup: ['Look up a product', 'Scan any product to see what it is and whether you have it.'],
-    add: ['Add to a new purchase', 'Scan each item. Use + for more than one of the same thing. Tap × when you’re finished.'],
+    add: ['Add to a new purchase', ADD_HINT],
+    loose: ['Add without a trip', ADD_HINT],
   };
 
   function scanFromSearch(startMode) {
     let mode = startMode || 'lookup';
     try { if (!startMode) mode = localStorage.getItem(SCAN_MODE_KEY) === 'add' ? 'add' : 'lookup'; } catch (e) { /* storage unavailable */ }
+    // Add mode can put items in a new trip or straight into inventory.
+    let into = 'trip';
+    try { into = localStorage.getItem(SCAN_INTO_KEY) === 'none' ? 'none' : 'trip'; } catch (e) { /* storage unavailable */ }
+    const titleFor = () => SCAN_MODES[mode === 'add' && into === 'none' ? 'loose' : mode];
     let found = null;
     let haulId = null;
+    let addedLoose = false;
     // The new purchase is only made once something is actually scanned.
     const session = scanSession(() => {
+      if (into === 'none') { addedLoose = true; return ''; }
       if (!haulId || !data.hauls.some((h) => h.id === haulId)) {
         const haul = cleanHaul({ date: today(), store: 'Dollar General' });
         data.hauls.unshift(haul);
@@ -1150,19 +1194,34 @@
         <label class="segment"><input type="radio" name="scan-mode" value="lookup"><span>Look up</span></label>
         <label class="segment"><input type="radio" name="scan-mode" value="add"><span>Add</span></label>
       </div>
+      <div class="filter-chips scan-into" role="radiogroup" aria-label="Add to">
+        <label class="filter-chip"><input type="radio" name="scan-into" value="trip"><span>New trip</span></label>
+        <label class="filter-chip"><input type="radio" name="scan-into" value="none"><span>No trip</span></label>
+      </div>
     `;
+    const intoRow = $('.scan-into', top);
+    intoRow.hidden = mode !== 'add';
     $$('input[name="scan-mode"]', top).forEach((r) => {
       r.checked = r.value === mode;
       r.addEventListener('change', () => {
         mode = r.value;
         try { localStorage.setItem(SCAN_MODE_KEY, mode); } catch (e) { /* storage unavailable */ }
-        window.setScannerText(...SCAN_MODES[mode]);
+        intoRow.hidden = mode !== 'add';
+        window.setScannerText(...titleFor());
+      });
+    });
+    $$('input[name="scan-into"]', top).forEach((r) => {
+      r.checked = r.value === into;
+      r.addEventListener('change', () => {
+        into = r.value;
+        try { localStorage.setItem(SCAN_INTO_KEY, into); } catch (e) { /* storage unavailable */ }
+        window.setScannerText(...titleFor());
       });
     });
 
     window.openScanner({
-      title: SCAN_MODES[mode][0],
-      hint: SCAN_MODES[mode][1],
+      title: titleFor()[0],
+      hint: titleFor()[1],
       top,
       panel: session.panel,
       onCode: async (code) => {
@@ -1178,11 +1237,12 @@
           data.hauls = data.hauls.filter((h) => h.id !== haulId);
           save();
           render();
-        } else if (haulId && session.count()) {
+        }
+        if (!found && session.count() && (addedLoose || (haulId && itemsOf(haulId).length))) {
           filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
           searchInput.value = '';
           setView('trips');
-          showHaul(haulId);
+          showHaul(haulId && itemsOf(haulId).length ? haulId : '');
         }
       },
     });

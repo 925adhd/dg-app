@@ -968,6 +968,12 @@ select:focus, input:focus {
   cursor: pointer;
 }
 .add-haul:hover { background: var(--dg-yellow-strong); }
+.add-buttons { margin-left: auto; display: flex; gap: 8px; }
+.add-buttons .add-haul { margin-left: 0; }
+.add-loose { background: var(--paper); color: var(--ink); }
+.add-loose:hover { background: var(--tag-bg); }
+.haul-loose-title { margin: 0; font-size: 1rem; font-weight: 700; }
+.scan-into { margin: -4px 0 12px; }
 
 .empty-note {
   background: var(--paper);
