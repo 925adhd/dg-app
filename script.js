@@ -634,8 +634,12 @@
     persistAndRender();
   });
 
-  clearAllBtn.addEventListener('click', () => {
-    if (!confirm('Clear every item and reset the calculator?')) return;
+  clearAllBtn.addEventListener('click', async () => {
+    if (!await window.appConfirm({
+      title: 'Clear everything?',
+      message: 'This removes every item and deal and resets the calculator.',
+      confirmText: 'Clear everything', cancelText: 'Keep', danger: true,
+    })) return;
     localStorage.removeItem(STORAGE_KEY);
     itemsList.innerHTML = '';
     spendList.innerHTML = '';
@@ -699,7 +703,7 @@
   itemsList.addEventListener('change', persistAndRender);
 
   // Hands the finished receipt to the Bought tab (bought.js) as a new trip.
-  saveToBoughtBtn.addEventListener('click', () => {
+  saveToBoughtBtn.addEventListener('click', async () => {
     const items = calculate().items
       .filter((it) => it.retail > 0 || it.lineSale > 0)
       .map((it) => ({
@@ -711,7 +715,11 @@
       }));
     if (!items.length) return;
     document.dispatchEvent(new CustomEvent('realtotal:save-haul', { detail: { items } }));
-    if (!confirm('Saved to Bought. Clear the calculator for your next trip?')) return;
+    if (!await window.appConfirm({
+      title: 'Saved to Bought',
+      message: 'Clear the calculator for your next trip?',
+      confirmText: 'Clear calculator', cancelText: 'Keep it',
+    })) return;
     itemsList.innerHTML = '';
     spendList.innerHTML = '';
     addItemRow();

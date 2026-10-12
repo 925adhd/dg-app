@@ -606,10 +606,14 @@
   [pricingPct, pricingCommission, pricingRent, pricingRentPeriod, pricingRentStart]
     .forEach((el) => el.addEventListener('change', onPricingInput));
 
-  $('#pricing-apply').addEventListener('click', () => {
+  $('#pricing-apply').addEventListener('click', async () => {
     const inStock = data.items.filter((it) => it.soldQty < it.qty && it.unitRetail > 0);
     if (!inStock.length) return;
-    if (!confirm(`Set ${inStock.length} in-stock item${inStock.length === 1 ? '' : 's'} to ${pricing.pctOff}% off retail? Any prices you set by hand will be replaced.`)) return;
+    if (!await window.appConfirm({
+      title: `Reprice ${inStock.length} item${inStock.length === 1 ? '' : 's'}?`,
+      message: `Everything in stock will be set to ${pricing.pctOff}% off retail. Any prices you set by hand will be replaced.`,
+      confirmText: 'Reprice', cancelText: 'Cancel',
+    })) return;
     inStock.forEach((it) => { it.resalePrice = boothPrice(it.unitRetail); });
     save();
     render();
@@ -687,7 +691,7 @@
     save();
   });
 
-  haulList.addEventListener('click', (e) => {
+  haulList.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const haulEl = btn.closest('.haul');
@@ -702,13 +706,21 @@
     } else if (btn.dataset.action === 'delete-item') {
       const id = btn.closest('.b-item').dataset.item;
       const it = data.items.find((i) => i.id === id);
-      if (!confirm(`Delete ${it && it.name ? `“${it.name}”` : 'this item'}?`)) return;
+      if (!await window.appConfirm({
+        title: `Delete ${it && it.name ? `“${it.name}”` : 'this item'}?`,
+        message: 'This can’t be undone.',
+        confirmText: 'Delete', cancelText: 'Keep', danger: true,
+      })) return;
       data.items = data.items.filter((i) => i.id !== id);
       save();
       render();
     } else if (btn.dataset.action === 'delete-haul') {
       const count = itemsOf(haulId).length;
-      if (!confirm(`Delete this whole trip${count ? ` and its ${count} item${count === 1 ? '' : 's'}` : ''}?`)) return;
+      if (!await window.appConfirm({
+        title: 'Delete this whole trip?',
+        message: (count ? `Its ${count} item${count === 1 ? '' : 's'} will be deleted too. ` : '') + 'This can’t be undone.',
+        confirmText: 'Delete trip', cancelText: 'Keep', danger: true,
+      })) return;
       data.hauls = data.hauls.filter((h) => h.id !== haulId);
       data.items = data.items.filter((i) => i.haulId !== haulId);
       save();
@@ -890,8 +902,17 @@
     }
     // Only remember the connection once it's proven to work.
     if (remote.hauls.length && data.hauls.length) {
-      const useSheet = confirm(`Your sheet already has ${remote.hauls.length} trip${remote.hauls.length === 1 ? '' : 's'}.\n\nOK = load the sheet’s data onto this device (replaces the ${data.hauls.length} here).\nCancel = keep this device’s data and overwrite the sheet.`);
-      if (useSheet) data = remote;
+      // Closing this without choosing cancels the connect, rather than
+      // silently overwriting either side.
+      const choice = await window.appChoose({
+        title: 'Your sheet already has data',
+        message: `The sheet has ${remote.hauls.length} trip${remote.hauls.length === 1 ? '' : 's'} and this device has ${data.hauls.length}. Which should be kept? The other one gets replaced.`,
+        confirmText: 'Use the sheet’s data',
+        altText: 'Keep this device’s data',
+        cancelText: 'Don’t connect',
+      });
+      if (choice === 'cancel') { showMessage('Not connected — nothing was changed.', 'unmet'); return; }
+      if (choice === 'confirm') data = remote;
     } else if (remote.hauls.length) {
       data = remote;
     }
@@ -937,8 +958,12 @@
     if (pulled) push(); else pull();
   });
 
-  $('#sync-disconnect').addEventListener('click', () => {
-    if (!confirm('Disconnect this device from the sheet? Your purchases stay on this device and in the sheet; they just stop syncing here.')) return;
+  $('#sync-disconnect').addEventListener('click', async () => {
+    if (!await window.appConfirm({
+      title: 'Disconnect this device?',
+      message: 'Your purchases stay on this device and in the sheet; they just stop syncing here.',
+      confirmText: 'Disconnect', cancelText: 'Stay connected',
+    })) return;
     try { localStorage.removeItem(SYNC_KEY); } catch (e) { /* storage unavailable */ }
     sync = null;
     pulled = false;
