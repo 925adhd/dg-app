@@ -1,5 +1,6 @@
 /**
- * The Real Total — "Bought" tab <-> Google Sheet sync backend.
+ * The Real Total — Google Sheet sync backend for purchases (the "Bought" tab),
+ * the calculator and its saved scenarios.
  *
  * Setup:
  * 1. Create a new Google Sheet (any name). This script rewrites its own three
@@ -10,11 +11,13 @@
  *    (the gear icon) -> Script Properties -> Add script property.
  *    Property = SECRET, Value = the key the app's "Generate a key" button made
  *    (or any 20+ character random string you make up).
- * 5. Deploy -> New deployment -> select type "Web app".
+ * 5. Deploy -> New deployment -> gear next to "Select type" -> "Web app".
  *    - Execute as: Me
  *    - Who has access: Anyone
- * 6. Copy the Web app URL it gives you (ends in /exec).
- * 7. In The Real Total, open Bought -> Google Sheet sync, paste the URL and the
+ * 6. Authorize it when asked. If Google says it hasn't verified the app, click
+ *    Advanced -> Go to (your project) -> Allow; it's your own script.
+ * 7. Copy the Web app URL it gives you (ends in /exec).
+ * 8. In The Real Total, open Bought -> Google Sheet sync, paste the URL and the
  *    same secret key, and tap Connect.
  *
  * The "Hauls", "Items" and "Calculator" tabs are created automatically on the
@@ -23,15 +26,11 @@
  * and overwritten. "Calculator" holds the calculator and its saved scenarios
  * as app data; don't edit it.
  *
- * Updating an existing sync: paste the new code over the old, then
- * Deploy -> Manage deployments -> Edit (pencil) -> Version: New version ->
- * Deploy. The web app URL stays the same.
- *
  * Security notes:
  * - The secret lives only in Script Properties and in your own browser, never
  *   in this file, so this code is safe to keep in a public repo.
  * - "Who has access: Anyone" means anyone with BOTH the Web app URL and the
- *   secret can read and overwrite these two tabs. Don't share either one, and
+ *   secret can read and overwrite these three tabs. Don't share either one, and
  *   don't reuse a secret you use anywhere else.
  * - The secret is only accepted in a POST body (never in the URL), so it stays
  *   out of browser history and server logs.

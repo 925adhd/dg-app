@@ -191,7 +191,9 @@
               <button type="button" class="ghost-button inline-button" id="sync-copy-script">Copy the script</button>
               or <a href="google-sheet-sync/Code.gs" target="_blank" rel="noopener">open it here</a>.</li>
             <li>Tap <button type="button" class="ghost-button inline-button" id="sync-generate">Generate a key</button>. Then in Apps Script go to <strong>Project Settings (gear) → Script Properties → Add script property</strong>, name it <code>SECRET</code> and paste the key as its value.</li>
-            <li>Click <strong>Deploy → New deployment → Web app</strong>. Set <em>Execute as: Me</em> and <em>Who has access: Anyone</em>, then deploy and copy the web app URL.</li>
+            <li>Click <strong>Deploy → New deployment</strong>, tap the gear next to <em>Select type</em> and pick <strong>Web app</strong>. Set <em>Execute as: Me</em> and <em>Who has access: Anyone</em>, then tap Deploy.</li>
+            <li>Google asks you to authorize it the first time. Pick your account; if it says <em>Google hasn't verified this app</em>, tap <strong>Advanced → Go to (your project) → Allow</strong>. It's your own script, only touching this sheet.</li>
+            <li>Copy the <strong>Web app URL</strong> it shows (it ends in <code>/exec</code>).</li>
             <li>Paste the URL and key below and tap Connect.</li>
           </ol>
           <div class="field-row">
@@ -209,7 +211,7 @@
         </div>
 
         <div id="sync-connected" hidden>
-          <p class="hint hint-top">Changes save to your sheet automatically a moment after you make them. When you open the app, it loads the latest from the sheet.</p>
+          <p class="hint hint-top">Your purchases, the calculator and your saved scenarios save to your sheet automatically a moment after you make them. When you open the app, it loads the latest from the sheet.</p>
           <div class="field-row">
             <button type="button" class="ghost-button" id="sync-now">Sync now</button>
             <button type="button" class="ghost-button" id="sync-disconnect">Disconnect this device</button>

@@ -803,11 +803,6 @@
     if (JSON.stringify(calc.get()) !== JSON.stringify(build)) calc.load(build);
   }
 
-  // Older copies of the sheet script only know about purchases.
-  function noteScriptVersion(body) {
-    showMessage(!('calc' in body) ? 'Your purchases sync, but the calculator and saved scenarios don’t yet. To sync them too, paste the latest sync script into Apps Script, then Deploy → Manage deployments → Edit → New version → Deploy.' : '');
-  }
-
   function setSyncStatus(state, text) {
     syncStatusEl.textContent = text;
     syncStatusEl.className = `sync-status ${state}`;
@@ -874,7 +869,6 @@
       const body = await callSheet(sync, 'pull');
       const remote = cleanData(body);
       const build = remoteBuild(body);
-      noteScriptVersion(body);
       pulled = true;
       // Whatever the sheet is missing just gets this device's copy.
       let needPush = false;
@@ -969,7 +963,7 @@
     try { localStorage.setItem(SYNC_KEY, JSON.stringify(conn)); } catch (e) { /* storage unavailable */ }
     syncUrlInput.value = '';
     syncKeyInput.value = '';
-    noteScriptVersion(body);
+    showMessage('');
     persist();
     render();
     renderSyncPanel();
