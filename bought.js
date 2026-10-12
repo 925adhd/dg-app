@@ -836,8 +836,9 @@
     if (f === 'qty') it.qty = Math.max(1, Math.round(num(el.value) || 1));
     else if (f === 'soldQty') it.soldQty = Math.max(0, Math.round(num(el.value)));
     else if (NUMBER_FIELDS.has(f)) it[f] = cleanMoney(el.value);
-    // Tax is part of what was paid, so it can't be more than the total.
-    if (f === 'totalPaid') it.taxPaid = Math.min(it.taxPaid, it.totalPaid);
+    // A typed price starts over with no tax split out, so Spread tax treats
+    // it as the price before tax.
+    if (f === 'totalPaid') it.taxPaid = 0;
     else if (f === 'soldDate') it.soldDate = DATE_RE.test(el.value) ? el.value : '';
     else if (f === 'upc') it.upc = cleanUpc(el.value);
     else it[f] = cleanText(el.value);
