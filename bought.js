@@ -779,43 +779,50 @@
     try { localStorage.setItem(NAMES_KEY, JSON.stringify(lookedUpNames)); } catch (e) { /* storage unavailable */ }
   }
 
-  // "Gain" + "Detergent" + "92 oz" -> "Gain Detergent 92 oz".
-  function productName(p) {
-    const clean = (v) => String(v || '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim();
-    const brand = clean(String(p.brands || '').split(',')[0]);
-    const name = clean(p.product_name);
-    const size = clean(p.quantity);
-    let full = name ? (brand && !name.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${name}` : name) : brand;
-    if (full && size && !full.toLowerCase().includes(size.toLowerCase())) full += ` ${size}`;
-    return full.slice(0, MAX_TEXT);
+  const cleanField = (v) => String(v || '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT);
+  // Only the databases' own image servers, over https.
+  const IMAGE_RE = /^https:\/\/images\.open(food|products|beauty)facts\.org\/[\w./-]+$/;
+
+  // Brand, name, size and photo from a database record. The full name reads
+  // like "Gain Detergent 92 oz".
+  function productDetails(p) {
+    const brand = cleanField(String(p.brands || '').split(',')[0]);
+    const title = cleanField(p.product_name);
+    const size = cleanField(p.quantity);
+    let name = title ? (brand && !title.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${title}` : title) : brand;
+    if (name && size && !name.toLowerCase().includes(size.toLowerCase())) name += ` ${size}`;
+    const image = [p.image_front_small_url, p.image_small_url].find((u) => typeof u === 'string' && IMAGE_RE.test(u)) || '';
+    return { name: name.slice(0, MAX_TEXT), brand, size, image };
   }
 
-  // Resolves to { name } when found, { name: '' } when no database has it,
-  // or { offline: true } when none of them could be reached.
-  async function lookUpOnline(code) {
-    if (lookedUpNames[code]) return { name: lookedUpNames[code] };
+  // Resolves to the product's details when found, { name: '' } when no
+  // database has it, or { offline: true } when none could be reached.
+  // `cached` skips the network for a name looked up before.
+  async function lookUpOnline(code, cached = true) {
+    if (cached && lookedUpNames[code]) return { name: lookedUpNames[code] };
     let answered = false;
     const tries = LOOKUP_HOSTS.map(async (host) => {
       const ctrl = new AbortController();
       const stopper = setTimeout(() => ctrl.abort(), 8000);
       try {
-        const res = await fetch(`https://${host}/api/v2/product/${code.padStart(13, '0')}.json?fields=product_name,brands,quantity`, {
+        const res = await fetch(`https://${host}/api/v2/product/${code.padStart(13, '0')}.json?fields=product_name,brands,quantity,image_front_small_url,image_small_url`, {
           credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', signal: ctrl.signal,
         });
         answered = true;
         const body = await res.json();
-        const name = body && body.status === 1 && body.product ? productName(body.product) : '';
-        if (!name) throw new Error('not found');
-        return name;
+        const product = body && body.status === 1 && body.product ? productDetails(body.product) : null;
+        if (!product || !product.name) throw new Error('not found');
+        return product;
       } finally {
         clearTimeout(stopper);
       }
     });
     try {
-      const name = await Promise.any(tries);
-      rememberName(code, name);
-      return { name };
+      const product = await Promise.any(tries);
+      rememberName(code, product.name);
+      return product;
     } catch (e) {
+      if (lookedUpNames[code]) return { name: lookedUpNames[code] };
       return answered ? { name: '' } : { offline: true };
     }
   }
@@ -823,13 +830,15 @@
   // The newest item you've saved with this barcode, to reuse its name and price.
   const knownItem = (code, except) => data.items.slice().reverse().find((i) => i !== except && i.upc === code && i.name);
 
-  async function addScannedItem(haulId, code) {
+  // `onAdded` runs as soon as the item is in the trip, before any online lookup.
+  async function addScannedItem(haulId, code, onAdded = () => {}) {
     if (!data.hauls.some((h) => h.id === haulId)) return { text: 'That trip is gone.', tone: 'unmet', close: true };
     const same = data.items.find((i) => i.haulId === haulId && i.upc === code);
     if (same) {
       same.qty += 1;
       save();
       render();
+      onAdded(same);
       return { text: `${same.name || code} — now ${same.qty} in this trip.`, tone: 'met' };
     }
     // A new trip starts with one empty row; scanning replaces it.
@@ -844,6 +853,7 @@
     data.items.push(it);
     save();
     render();
+    onAdded(it);
     if (it.name) return { text: `Added ${it.name}${known && known.unitRetail ? ` (retail ${money(known.unitRetail)})` : ''}.`, tone: 'met' };
 
     const found = await lookUpOnline(code);
@@ -861,35 +871,260 @@
     };
   }
 
+  // A run of scans into one trip. The scanner lists everything scanned so
+  // far, with – and + to change how many without scanning again.
+  // `getHaulId` returns the trip to add to, creating it if need be.
+  function scanSession(getHaulId) {
+    const panel = document.createElement('div');
+    panel.className = 'scan-list-wrap';
+    // Item id -> how many it had before this scanning session (0 = new).
+    const scanned = new Map();
+
+    function renderList() {
+      const rows = Array.from(scanned.keys())
+        .map((id) => data.items.find((i) => i.id === id))
+        .filter(Boolean)
+        .reverse();
+      const units = rows.reduce((n, it) => n + it.qty - scanned.get(it.id), 0);
+      panel.innerHTML = rows.length ? `
+        <p class="scan-list-head">Scanned so far: ${units} item${units === 1 ? '' : 's'}</p>
+        <ul class="scan-list">${rows.map((it) => `
+          <li data-id="${esc(it.id)}">
+            <span class="scan-list-name">${esc(it.name || `Barcode ${it.upc}`)}</span>
+            <span class="scan-qty">
+              <button type="button" data-step="-1" aria-label="One less">&minus;</button>
+              <span class="scan-qty-n">${it.qty}</span>
+              <button type="button" data-step="1" aria-label="One more">+</button>
+            </span>
+          </li>`).join('')}
+        </ul>` : '';
+    }
+
+    panel.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-step]');
+      if (!btn) return;
+      const id = btn.closest('li').dataset.id;
+      const it = data.items.find((i) => i.id === id);
+      if (!it) return;
+      const before = scanned.get(id);
+      if (btn.dataset.step === '1') {
+        it.qty += 1;
+      } else if (it.qty > Math.max(1, before)) {
+        it.qty -= 1;
+      } else if (before === 0) {
+        // Taking a just-scanned item down from 1 removes it again.
+        data.items = data.items.filter((i) => i !== it);
+        scanned.delete(id);
+      } else {
+        return; // never below what the trip had before scanning
+      }
+      it.soldQty = Math.min(it.soldQty, it.qty);
+      save();
+      render();
+      renderList();
+    });
+
+    async function onCode(code) {
+      const result = await addScannedItem(getHaulId(), code, (it) => {
+        if (!scanned.has(it.id)) scanned.set(it.id, it.qty - 1);
+        renderList();
+      });
+      renderList(); // picks up a name found online
+      return result;
+    }
+
+    return { panel, onCode, count: () => scanned.size };
+  }
+
+  // Jump to a trip, at the first item that still needs a name typed in.
+  function showHaul(haulId) {
+    const haulEl = $(`.haul[data-haul="${CSS.escape(haulId)}"]`);
+    if (!haulEl) return;
+    const blank = $('.item-name[value=""]', haulEl);
+    (blank || haulEl).scrollIntoView({ block: blank ? 'center' : 'start' });
+  }
+
   function scanIntoHaul(haulId) {
+    const session = scanSession(() => haulId);
     window.openScanner({
       title: 'Scan items into this trip',
-      hint: 'Scan each item. Scanning the same one again adds 1 more. Tap Done when you’re finished.',
-      onCode: (code) => addScannedItem(haulId, code),
+      hint: 'Scan each item. Use + for more than one of the same thing. Tap × when you’re finished.',
+      panel: session.panel,
+      onCode: session.onCode,
+      onClose: () => showHaul(haulId),
+    });
+  }
+
+  // ---------- Product card (barcode icon in the search bar) ----------
+  // Scanning here shows what the product is and what you have of it.
+  let productDialog = null;
+
+  function buildProductDialog() {
+    productDialog = document.createElement('dialog');
+    productDialog.className = 'scan-dialog product-dialog';
+    productDialog.setAttribute('aria-labelledby', 'product-title');
+    productDialog.innerHTML = `
+      <div class="scan-body">
+        <div class="scan-head">
+          <h2 class="scan-title" id="product-title">Product</h2>
+          <button type="button" class="scan-close" data-p="close" aria-label="Close">&times;</button>
+        </div>
+        <div class="product-card">
+          <img class="product-img" alt="" referrerpolicy="no-referrer" hidden>
+          <div class="product-text">
+            <p class="product-name"></p>
+            <p class="product-meta"></p>
+            <p class="product-code"></p>
+          </div>
+        </div>
+        <p class="threshold-status product-owned"></p>
+        <div class="product-actions">
+          <button type="button" class="add-button" data-p="show">Show my items</button>
+          <button type="button" class="add-button add-button-secondary" data-p="add">Add to a new purchase</button>
+          <button type="button" class="ghost-button" data-p="again">Scan another</button>
+        </div>
+      </div>
+    `;
+    productDialog.addEventListener('click', (e) => {
+      if (e.target === productDialog) productDialog.close();
+    });
+    document.body.appendChild(productDialog);
+  }
+
+  function ownedSummary(code) {
+    const mine = data.items.filter((i) => i.upc === code);
+    if (!mine.length) return { text: 'You haven’t bought this yet.', tone: 'unmet', count: 0 };
+    const left = mine.reduce((n, it) => n + itemCalc(it).left, 0);
+    const bought = mine.reduce((n, it) => n + it.qty, 0);
+    const places = Array.from(new Set(mine.map((i) => i.location.trim()).filter(Boolean)));
+    const haulDate = new Map(data.hauls.map((h) => [h.id, h.date]));
+    const lastDate = mine.map((i) => haulDate.get(i.haulId) || '').sort().pop();
+    const newest = mine[mine.length - 1];
+    const parts = [
+      left ? `You have ${left} in stock${places.length ? ` (${places.join(', ')})` : ''}` : `All ${bought} sold`,
+      `bought ${bought} in all`,
+    ];
+    if (newest.qty && newest.totalPaid) parts.push(`paid ${money(newest.totalPaid / newest.qty)} each last time`);
+    if (lastDate) parts.push(`last bought ${formatDate(lastDate)}`);
+    return { text: parts.join(' · ') + '.', tone: 'met', count: mine.length };
+  }
+
+  function showProduct(code, product) {
+    if (!productDialog) buildProductDialog();
+    const known = knownItem(code);
+    const name = product.name || (known && known.name) || '';
+    const img = $('.product-img', productDialog);
+    img.hidden = !product.image;
+    img.removeAttribute('src');
+    if (product.image) img.src = product.image;
+    $('.product-name', productDialog).textContent = name || 'Unknown product';
+    const meta = [product.brand, product.size].filter(Boolean).join(' · ');
+    $('.product-meta', productDialog).textContent = product.name
+      ? meta
+      : product.offline
+        ? 'Couldn’t reach the product database (no connection?).'
+        : `Not in the free product database.${known ? ' Name from your purchases.' : ''}`;
+    $('.product-code', productDialog).textContent = `Barcode ${code}`;
+    const owned = ownedSummary(code);
+    const ownedEl = $('.product-owned', productDialog);
+    ownedEl.textContent = owned.text;
+    ownedEl.className = `threshold-status product-owned ${owned.tone}`;
+    $('[data-p="show"]', productDialog).hidden = !owned.count;
+
+    $$('[data-p]', productDialog).forEach((btn) => {
+      btn.onclick = () => {
+        const action = btn.dataset.p;
+        productDialog.close();
+        if (action === 'show') {
+          searchInput.value = code;
+          render();
+          (viewMode() === 'inventory' ? invList : haulList).scrollIntoView({ block: 'start' });
+        } else if (action === 'add') {
+          const haul = cleanHaul({ date: today(), store: 'Dollar General' });
+          data.hauls.unshift(haul);
+          data.items.push(cleanItem({ haulId: haul.id, qty: 1, upc: code, name, unitRetail: known ? known.unitRetail : 0 }));
+          filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
+          searchInput.value = '';
+          save();
+          setView('trips');
+          const el = $(`.haul[data-haul="${CSS.escape(haul.id)}"] .b-item`);
+          if (el) el.scrollIntoView({ block: 'center' });
+        } else if (action === 'again') {
+          scanFromSearch('lookup');
+        }
+      };
+    });
+    productDialog.showModal();
+  }
+
+  // The barcode icon in the search bar: look products up, or add them to a
+  // new purchase. The last mode used is remembered on this device.
+  const SCAN_MODE_KEY = 'therealtotal:scan-mode';
+  const SCAN_MODES = {
+    lookup: ['Look up a product', 'Scan any product to see what it is and whether you have it.'],
+    add: ['Add to a new purchase', 'Scan each item. Use + for more than one of the same thing. Tap × when you’re finished.'],
+  };
+
+  function scanFromSearch(startMode) {
+    let mode = startMode || 'lookup';
+    try { if (!startMode) mode = localStorage.getItem(SCAN_MODE_KEY) === 'add' ? 'add' : 'lookup'; } catch (e) { /* storage unavailable */ }
+    let found = null;
+    let haulId = null;
+    // The new purchase is only made once something is actually scanned.
+    const session = scanSession(() => {
+      if (!haulId || !data.hauls.some((h) => h.id === haulId)) {
+        const haul = cleanHaul({ date: today(), store: 'Dollar General' });
+        data.hauls.unshift(haul);
+        haulId = haul.id;
+      }
+      return haulId;
+    });
+
+    const top = document.createElement('div');
+    top.innerHTML = `
+      <div class="segmented scan-modes" role="radiogroup" aria-label="What scanning does">
+        <label class="segment"><input type="radio" name="scan-mode" value="lookup"><span>Look up</span></label>
+        <label class="segment"><input type="radio" name="scan-mode" value="add"><span>Add</span></label>
+      </div>
+    `;
+    $$('input[name="scan-mode"]', top).forEach((r) => {
+      r.checked = r.value === mode;
+      r.addEventListener('change', () => {
+        mode = r.value;
+        try { localStorage.setItem(SCAN_MODE_KEY, mode); } catch (e) { /* storage unavailable */ }
+        window.setScannerText(...SCAN_MODES[mode]);
+      });
+    });
+
+    window.openScanner({
+      title: SCAN_MODES[mode][0],
+      hint: SCAN_MODES[mode][1],
+      top,
+      panel: session.panel,
+      onCode: async (code) => {
+        if (mode === 'add') return session.onCode(code);
+        found = { code, product: await lookUpOnline(code, false) };
+        return { close: true };
+      },
       onClose: () => {
-        // Jump to the first item that still needs a name typed in.
-        const blank = $(`.haul[data-haul="${CSS.escape(haulId)}"] .item-name[value=""]`);
-        if (blank) blank.scrollIntoView({ block: 'center' });
+        if (found) {
+          showProduct(found.code, found.product);
+        } else if (haulId && !itemsOf(haulId).length) {
+          // Everything scanned was taken back out, so drop the empty purchase.
+          data.hauls = data.hauls.filter((h) => h.id !== haulId);
+          save();
+          render();
+        } else if (haulId && session.count()) {
+          filterInputs.forEach((r) => { r.checked = r.value === 'all'; });
+          searchInput.value = '';
+          setView('trips');
+          showHaul(haulId);
+        }
       },
     });
   }
 
-  $('#bought-scan').addEventListener('click', () => {
-    window.openScanner({
-      title: 'Find an item by barcode',
-      hint: 'Scan something you bought to find it.',
-      onCode: (code) => {
-        searchInput.value = code;
-        render();
-        const n = data.items.filter((i) => i.upc === code).length;
-        if (!n) {
-          showInvMessage(`Nothing saved with barcode ${code} yet.`, 'unmet');
-          return { text: `Nothing saved with barcode ${code} yet.`, tone: 'unmet', close: false };
-        }
-        return { close: true };
-      },
-    });
-  });
+  $('#bought-scan').addEventListener('click', () => scanFromSearch());
 
   // ---------- Receipt -> Bought ----------
   // The calculator sends its finished receipt here as a new trip.

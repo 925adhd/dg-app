@@ -1165,7 +1165,21 @@ select:focus, input:focus {
   margin-bottom: 12px;
 }
 .scan-title { margin: 0; font-size: 1.05rem; font-weight: 700; line-height: 1.3; }
-.scan-done, .scan-manual-add {
+.scan-close {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.scan-close:hover { background: var(--backdrop); }
+.scan-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.scan-manual-add {
   font-family: var(--font-ui);
   font-size: 0.9rem;
   font-weight: 700;
@@ -1200,6 +1214,61 @@ select:focus, input:focus {
 .scan-status { margin-top: 10px; }
 .scan-manual { display: flex; gap: 8px; margin-top: 12px; }
 .scan-manual input { flex: 1; min-width: 0; }
+.scan-panel:empty, .scan-top:empty { display: none; }
+.scan-modes { margin-bottom: 12px; display: flex; }
+.scan-modes .segment { flex: 1; text-align: center; }
+.scan-list-head { margin: 12px 0 6px; font-size: 0.85rem; font-weight: 600; }
+.scan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 32vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.scan-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 6px 6px 12px;
+  border-top: 1px solid var(--line);
+}
+.scan-list li:first-child { border-top: none; }
+.scan-list-name { min-width: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.scan-qty { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.scan-qty button {
+  width: 36px;
+  height: 36px;
+  font-family: var(--font-ui);
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.scan-qty button:hover { background: var(--tag-bg); }
+.scan-qty-n { min-width: 2ch; text-align: center; font-family: var(--font-tape); font-weight: 600; }
+.product-card { display: flex; gap: 14px; align-items: flex-start; }
+.product-img {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.product-text { min-width: 0; }
+.product-name { margin: 0; font-size: 1.1rem; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.product-meta { margin: 4px 0 0; font-size: 0.88rem; color: var(--muted); }
+.product-code { margin: 6px 0 0; font-family: var(--font-tape); font-size: 0.8rem; color: var(--muted); }
+.product-owned { margin-top: 14px; }
+.product-actions { display: grid; gap: 8px; margin-top: 14px; }
+.product-actions .add-button { margin-top: 0; }
 .inv-item { background: var(--paper); }
 .inv-head {
   display: flex;

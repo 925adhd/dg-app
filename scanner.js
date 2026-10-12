@@ -8,6 +8,8 @@
 //     title: 'Scan items',
 //     hint: 'Keep scanning to add more.',
 //     onCode: async (code) => ({ text: 'Added Tide', tone: 'met', close: false }),
+//     top: element,    // optional, shown above the camera (e.g. a mode switch)
+//     panel: element,  // optional, shown under the camera (e.g. a list of scans)
 //   });
 //
 // `code` is digits only, with UPC-E and zero-led EAN-13 turned into the
@@ -125,14 +127,16 @@
       <div class="scan-body">
         <div class="scan-head">
           <h2 class="scan-title" id="scan-title"></h2>
-          <button type="button" class="scan-done">Done</button>
+          <button type="button" class="scan-close" aria-label="Close scanner">&times;</button>
         </div>
+        <div class="scan-top"></div>
         <div class="scan-view">
           <video playsinline muted autoplay></video>
           <div class="scan-guide" aria-hidden="true"></div>
         </div>
         <p class="scan-hint"></p>
         <p class="threshold-status scan-status" aria-live="polite" hidden></p>
+        <div class="scan-panel"></div>
         <div class="scan-manual">
           <input type="text" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="Or type the barcode number" aria-label="Barcode number">
           <button type="button" class="scan-manual-add">Add</button>
@@ -145,7 +149,11 @@
     titleEl = dialog.querySelector('.scan-title');
     hintEl = dialog.querySelector('.scan-hint');
     manualInput = dialog.querySelector('.scan-manual input');
-    dialog.querySelector('.scan-done').addEventListener('click', () => dialog.close());
+    dialog.querySelector('.scan-close').addEventListener('click', () => dialog.close());
+    // Tapping the dimmed area outside the scanner closes it.
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) dialog.close();
+    });
     dialog.addEventListener('close', stop);
     const addManual = () => {
       const raw = digitsOnly(manualInput.value);
@@ -217,6 +225,13 @@
     return (err && err.message) || 'The camera couldn’t start. You can type the barcode number below.';
   }
 
+  // Lets the caller relabel the open scanner (e.g. when switching modes).
+  window.setScannerText = (title, hint) => {
+    if (!dialog) return;
+    titleEl.textContent = title;
+    hintEl.textContent = hint;
+  };
+
   window.openScanner = async (opts) => {
     if (!dialog) build();
     if (dialog.open) dialog.close();
@@ -227,6 +242,8 @@
     hintEl.textContent = opts.hint || 'Line the barcode up inside the box.';
     hintEl.hidden = false;
     setStatus('');
+    dialog.querySelector('.scan-top').replaceChildren(...(opts.top ? [opts.top] : []));
+    dialog.querySelector('.scan-panel').replaceChildren(...(opts.panel ? [opts.panel] : []));
     manualInput.value = '';
     dialog.showModal();
 
