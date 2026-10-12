@@ -104,6 +104,7 @@
   const stickyTotalAmount = $('#sticky-total-amount');
   const spendList = $('#spend-list');
   const addSpendBtn = $('#add-spend');
+  const saveToBoughtBtn = $('#save-to-bought');
 
   let itemCounter = 0;
   let spendCounter = 0;
@@ -319,20 +320,33 @@
     row.dataset.selected = JSON.stringify(Array.isArray(data.items) ? data.items : []);
     const kind = SPEND_KINDS[data.kind] ? data.kind : 'dg';
     const split = data.split === 'even' ? 'even' : 'price';
-    const repeat = data.repeat !== false;
+    const mode = data.mode === 'qty' ? 'qty' : 'spend';
+    const repeat = data.repeat !== undefined ? data.repeat !== false : mode === 'spend';
+    row.dataset.mode = mode;
     row.innerHTML = `
       <div class="item-row-top">
         <input type="text" class="spend-name" placeholder="Deal name" value="${escapeAttr(data.name || '')}">
         <button type="button" class="remove-item remove-spend" aria-label="Remove deal">&times;</button>
       </div>
       <div class="field-row spend-fields">
+        <label class="field field-narrow spend-mode-field">
+          <span class="field-label">Deal type</span>
+          <select class="s-mode">
+            <option value="spend" ${mode === 'spend' ? 'selected' : ''}>Spend $X, save $</option>
+            <option value="qty" ${mode === 'qty' ? 'selected' : ''}>Buy any X items, save $</option>
+          </select>
+        </label>
         <label class="field field-narrow">
           <span class="field-label">Save</span>
           <div class="unit-input"><span class="unit">$</span><input type="number" class="s-amount" min="0" step="0.01" placeholder="5.00" value="${data.amount ?? ''}"></div>
         </label>
-        <label class="field field-narrow">
+        <label class="field field-narrow s-threshold-field" ${mode === 'qty' ? 'hidden' : ''}>
           <span class="field-label">When you spend</span>
           <div class="unit-input"><span class="unit">$</span><input type="number" class="s-threshold" min="0" step="0.01" placeholder="25.00" value="${data.threshold ?? ''}"></div>
+        </label>
+        <label class="field field-narrow s-count-field" ${mode === 'qty' ? '' : 'hidden'}>
+          <span class="field-label">When you buy any</span>
+          <div class="unit-input"><input type="number" class="s-count" min="1" step="1" inputmode="numeric" placeholder="2" value="${data.count ?? ''}"><span class="unit">items</span></div>
         </label>
         <label class="field field-narrow">
           <span class="field-label">Counts as</span>
@@ -348,7 +362,7 @@
       </div>
       <label class="taxable-toggle spend-repeat">
         <input type="checkbox" class="s-repeat" ${repeat ? 'checked' : ''}>
-        Repeats as you spend more (spend 2× as much, save 2× as much)
+        <span class="s-repeat-text">${repeatText(mode)}</span>
       </label>
       <span class="field-label spend-items-label">Items that count toward it</span>
       <div class="chip-grid s-items"></div>
@@ -361,6 +375,25 @@
     spendList.appendChild(row);
     return row;
   }
+
+  function repeatText(mode) {
+    return mode === 'qty'
+      ? 'Repeats for each full set (buy 2× the items, save 2×) — leave off for a one-time coupon'
+      : 'Repeats as you spend more (spend 2× as much, save 2× as much)';
+  }
+
+  // Switching deal type swaps the "spend $" box for the "buy any X items" box.
+  // Item-count coupons are usually one per transaction, so repeat starts off.
+  spendList.addEventListener('change', (e) => {
+    if (!e.target.classList.contains('s-mode')) return;
+    const row = e.target.closest('.spend-row');
+    const mode = e.target.value;
+    row.dataset.mode = mode;
+    $('.s-threshold-field', row).hidden = mode === 'qty';
+    $('.s-count-field', row).hidden = mode !== 'qty';
+    $('.s-repeat', row).checked = mode !== 'qty';
+    $('.s-repeat-text', row).textContent = repeatText(mode);
+  });
 
   // Keep each deal's item checklist in step with the item rows, preserving
   // which items were ticked. Only rebuilds when the item list actually changed.
@@ -391,6 +424,8 @@
       name: $('.spend-name', row).value.trim(),
       amount: num($('.s-amount', row).value),
       threshold: num($('.s-threshold', row).value),
+      mode: $('.s-mode', row).value,
+      count: Math.max(0, Math.round(num($('.s-count', row).value))),
       kind: $('.s-kind', row).value,
       split: $('.s-split', row).value,
       repeat: $('.s-repeat', row).checked,
@@ -399,7 +434,8 @@
   }
 
   function spendLabel(d) {
-    const offer = `Save $${d.amount.toFixed(2)} on $${d.threshold.toFixed(2)}` + (d.times > 1 ? ` (×${d.times})` : '');
+    const offer = (d.mode === 'qty' ? `Save $${d.amount.toFixed(2)} on any ${d.count}` : `Save $${d.amount.toFixed(2)} on $${d.threshold.toFixed(2)}`)
+      + (d.times > 1 ? ` (×${d.times})` : '');
     return (d.name ? `${d.name}: ${offer}` : offer) + (SLOT_SUFFIX[d.kind] ?? '');
   }
 
@@ -529,6 +565,29 @@
   itemsList.addEventListener('input', persistAndRender);
   itemsList.addEventListener('change', persistAndRender);
 
+  // Hands the finished receipt to the Bought tab (bought.js) as a new trip.
+  saveToBoughtBtn.addEventListener('click', () => {
+    const items = calculate().items
+      .filter((it) => it.retail > 0 || it.lineSale > 0)
+      .map((it) => ({
+        name: it.name || 'Item',
+        qty: it.qty,
+        unitRetail: it.retail || it.unitPrice,
+        totalPaid: round2(it.finalLine + it.taxShare),
+        taxPaid: it.taxShare,
+      }));
+    if (!items.length) return;
+    document.dispatchEvent(new CustomEvent('realtotal:save-haul', { detail: { items } }));
+    if (!confirm('Saved to Bought. Clear the calculator for your next trip?')) return;
+    itemsList.innerHTML = '';
+    spendList.innerHTML = '';
+    addItemRow();
+    addItemRow();
+    $('input[name="basket"][value="none"]').checked = true;
+    customFields.hidden = true;
+    persistAndRender();
+  });
+
   stickyTotal.addEventListener('click', () => {
     receipt.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
@@ -655,10 +714,15 @@
       const members = shelfItems.filter((i) => d.itemUids.includes(i.uid));
       d.memberCount = members.length;
       d.spend = round2(members.reduce((s, i) => s + i.shelf, 0));
-      d.qualifies = d.amount > 0 && d.threshold > 0 && members.length > 0 && d.spend >= d.threshold;
+      // "Buy any X" deals count units across every ticked item, so 1 bleach
+      // + 1 wipes meets "any 2", and so does 2 of the same bleach.
+      d.units = members.reduce((s, i) => s + i.qty, 0);
+      const have = d.mode === 'qty' ? d.units : d.spend;
+      const need = d.mode === 'qty' ? d.count : d.threshold;
+      d.qualifies = d.amount > 0 && need > 0 && members.length > 0 && have >= need;
       // A repeating deal pays out once per full threshold reached —
       // "$5 off $15" becomes $10 off at $30, $15 off at $45, and so on.
-      d.times = d.qualifies ? (d.repeat ? Math.floor(round2(d.spend / d.threshold) + 1e-9) : 1) : 0;
+      d.times = d.qualifies ? (d.repeat ? Math.floor(round2(have / need) + 1e-9) : 1) : 0;
       d.earned = round2(d.amount * d.times);
       d.capped = false;
     });
@@ -761,6 +825,17 @@
     const nonTaxableSubtotal = finalItems.filter((i) => !i.taxable).reduce((s, i) => s + i.finalLine, 0);
     const rate = Math.max(0, num(taxRateInput.value));
     const tax = round2(taxableBasis * (rate / 100));
+
+    // Each taxable line's share of the tax, with rounding pennies landing on
+    // the largest line so the shares add up to the receipt's tax exactly.
+    // Used when a receipt is saved to the Bought tab as real per-item cost.
+    finalItems.forEach((it) => { it.taxShare = it.taxable ? round2(it.taxBasisLine * (rate / 100)) : 0; });
+    const taxRemainder = round2(tax - finalItems.reduce((s, it) => s + it.taxShare, 0));
+    const taxedLines = finalItems.filter((it) => it.taxable && it.taxBasisLine > 0);
+    if (taxRemainder !== 0 && taxedLines.length) {
+      const largest = taxedLines.reduce((a, b) => (b.taxBasisLine > a.taxBasisLine ? b : a), taxedLines[0]);
+      largest.taxShare = round2(largest.taxShare + taxRemainder);
+    }
     const preTaxSubtotal = round2(taxableSubtotal + nonTaxableSubtotal);
     const total = round2(preTaxSubtotal + tax);
     const totalRetail = finalItems.reduce((s, i) => s + i.lineRetail, 0);
@@ -790,8 +865,11 @@
     result.spendDeals.forEach((d) => {
       const el = $('.spend-status', d.el);
       el.hidden = false;
-      if (d.amount <= 0 || d.threshold <= 0) {
-        el.textContent = 'Enter how much you save and how much you need to spend.';
+      const qty = d.mode === 'qty';
+      const plural = (n) => `${n} item${n === 1 ? '' : 's'}`;
+      const more = (n) => `${n} more item${n === 1 ? '' : 's'}`;
+      if (d.amount <= 0 || (qty ? d.count <= 0 : d.threshold <= 0)) {
+        el.textContent = qty ? 'Enter how much you save and how many items you need to buy.' : 'Enter how much you save and how much you need to spend.';
         el.className = 'threshold-status spend-status unmet';
       } else if (!d.memberCount) {
         el.textContent = 'Tick at least one item that counts toward this deal.';
@@ -799,11 +877,15 @@
       } else if (d.qualifies) {
         const split = d.memberCount > 1 ? ` split ${d.split === 'even' ? 'evenly' : 'by price'} across ${d.memberCount} items` : '';
         const times = d.times > 1 ? ` (${d.times} × ${money(d.amount)})` : '';
-        const next = d.repeat ? ` Spend ${money(round2(d.threshold * (d.times + 1) - d.spend))} more for another ${money(d.amount)} off.` : '';
-        el.textContent = `Qualified — ${money(d.spend)} spent, ${money(d.earned)} off${times}${split}.` + (d.capped ? ' (Capped at what the items cost.)' : '') + next;
+        const next = !d.repeat ? ''
+          : qty ? ` Add ${more(d.count * (d.times + 1) - d.units)} for another ${money(d.amount)} off.`
+          : ` Spend ${money(round2(d.threshold * (d.times + 1) - d.spend))} more for another ${money(d.amount)} off.`;
+        el.textContent = `Qualified — ${qty ? `${plural(d.units)} bought` : `${money(d.spend)} spent`}, ${money(d.earned)} off${times}${split}.` + (d.capped ? ' (Capped at what the items cost.)' : '') + next;
         el.className = 'threshold-status spend-status met';
       } else {
-        el.textContent = `${money(d.spend)} of ${money(d.threshold)} — spend ${money(d.threshold - d.spend)} more on these items to unlock it.`;
+        el.textContent = qty
+          ? `${d.units} of ${d.count} items — add ${more(d.count - d.units)} from the ticked products to unlock it.`
+          : `${money(d.spend)} of ${money(d.threshold)} — spend ${money(d.threshold - d.spend)} more on these items to unlock it.`;
         el.className = 'threshold-status spend-status unmet';
       }
     });
@@ -823,6 +905,7 @@
         <p class="rt-empty">Add an item on the left and your running total prints out here.</p>
       `;
       stickyTotal.dataset.visible = 'false';
+      saveToBoughtBtn.hidden = true;
       return;
     }
 
@@ -885,6 +968,7 @@
 
     stickyTotalAmount.textContent = money(total);
     stickyTotal.dataset.visible = 'true';
+    saveToBoughtBtn.hidden = !lines;
   }
 
   // How much of the item's retail price all its deals knock off, before tax.
@@ -919,6 +1003,7 @@
       customThreshold: customThreshold.value,
       spendDeals: readSpendDeals().map((d) => ({
         name: d.name, amount: $('.s-amount', d.el).value, threshold: $('.s-threshold', d.el).value,
+        mode: d.mode, count: $('.s-count', d.el).value,
         kind: d.kind, split: d.split, repeat: d.repeat, items: d.itemUids,
       })),
       items: readItems().map((it) => ({

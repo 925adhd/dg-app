@@ -13,10 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<script>
-  // Apply a saved dark-mode choice before first paint so it doesn't flash light.
-  try { if (localStorage.getItem('therealtotal:theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (e) {}
-</script>
+<script src="theme-init.js"></script>
 </head>
 <body>
 
@@ -30,6 +27,12 @@
     <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch to dark mode"></button>
   </header>
 
+  <div class="tab-bar" role="tablist" aria-label="Sections">
+    <button type="button" class="tab-button" role="tab" id="tab-btn-calc" data-tab="calc" aria-controls="view-calc" aria-selected="true">Calculator</button>
+    <button type="button" class="tab-button" role="tab" id="tab-btn-bought" data-tab="bought" aria-controls="view-bought" aria-selected="false" tabindex="-1">Bought</button>
+  </div>
+
+  <div id="view-calc" role="tabpanel" aria-labelledby="tab-btn-calc">
   <main class="layout">
 
     <section class="panel panel-form" aria-label="Cart setup">
@@ -77,7 +80,7 @@
 
       <div class="control-group">
         <h2>Spend &amp; save deals</h2>
-        <p class="hint hint-top">For offers like "Save $5 when you spend $25 on select P&amp;G products" or "$3 Instant Savings when you spend $15." Tick the items that count toward each deal.</p>
+        <p class="hint hint-top">For offers like "Save $5 when you spend $25 on select P&amp;G products," "$3 Instant Savings when you spend $15," or "Save $2 on any 2 Clorox products." Tick the items that count toward each deal.</p>
         <div id="spend-list"></div>
         <button type="button" id="add-spend" class="add-button add-button-secondary">+ Add spend &amp; save deal</button>
       </div>
@@ -103,6 +106,7 @@
           <path d="M0,0 L200,0 L200,3 L189,15 L182,4 L175,14 L168,2 L161,13 L154,5 L147,16 L140,3 L133,12 L126,1 L119,14 L112,6 L105,15 L98,2 L91,11 L84,4 L77,16 L70,3 L63,13 L56,5 L49,15 L42,1 L35,12 L28,4 L21,16 L14,2 L7,13 L0,4 Z"></path>
         </svg>
       </div>
+      <button type="button" id="save-to-bought" class="add-button save-to-bought" hidden>Save to Bought</button>
     </aside>
 
   </main>
@@ -118,7 +122,7 @@
       <ol>
         <li>Start from each item's sale price — this is the price you'll actually be charged before any coupons, so fold in any "Instant Savings" markdown shown on the shelf tag here too.</li>
         <li>Apply any multi-buy deal (Buy X Get Y free/%/$ off, X for $ bundle pricing, or Buy X Save $) based on how many you're buying. Mark what it "counts as" — a store offer, a DG coupon, or a manufacturer coupon — since that decides when it applies, whether it counts toward the basket-coupon threshold, and whether it counts toward the tax you owe. A deal marked as a DG coupon or manufacturer coupon locks the matching field below it, since only one of each is allowed per item.</li>
-        <li>Check each spend &amp; save deal ("Save $5 when you spend $25") against the items you ticked for it, using their price after sale prices and store offer deals. If you spend enough, the savings are spread proportionally across those items — and if the deal repeats, you get it again for every full threshold you reach (spend $30 on a "$5 off $15" deal and you save $10). A deal counted as Instant Savings comes off right away, one counted as a DG coupon comes off with the DG coupons, and one counted as a manufacturer coupon comes off at the very end, after tax is figured.</li>
+        <li>Check each spend &amp; save deal ("Save $5 when you spend $25") against the items you ticked for it, using their price after sale prices and store offer deals. A "buy any X items" deal ("Save $2 on any 2") counts how many of the ticked items you're buying instead — mixing different products is fine. If you spend enough, the savings are spread proportionally across those items — and if the deal repeats, you get it again for every full threshold you reach (spend $30 on a "$5 off $15" deal and you save $10). A deal counted as Instant Savings comes off right away, one counted as a DG coupon comes off with the DG coupons, and one counted as a manufacturer coupon comes off at the very end, after tax is figured.</li>
         <li>Subtract DG store/digital coupons (and any multi-buy deal marked as one) — a coupon never pushes an item below $0.</li>
         <li>Check your subtotal against the basket coupon's threshold. Manufacturer coupons — including multi-buy deals marked as manufacturer coupons — don't count toward this check.</li>
         <li>If you qualify, the basket coupon (like $5 off $25) is spread proportionally across your qualifying items, the same way Dollar General's registers do it.</li>
@@ -128,9 +132,100 @@
       <p class="disclaimer">Not affiliated with or endorsed by Dollar General. Tax rates are estimates — actual store totals can vary by a few cents depending on local tax rules and rounding.</p>
     </details>
   </footer>
+  </div>
+
+  <div id="view-bought" role="tabpanel" aria-labelledby="tab-btn-bought" hidden>
+    <section class="bought">
+
+      <input type="search" id="bought-search" class="bought-search" placeholder="Search items, locations, trips" aria-label="Search purchases" autocomplete="off">
+
+      <div class="stat-grid" id="bought-summary" aria-live="polite"></div>
+
+      <div class="bought-toolbar">
+        <div class="radio-grid" role="radiogroup" aria-label="View">
+          <label class="radio-pill"><input type="radio" name="bought-view" value="trips" checked><span>By trip</span></label>
+          <label class="radio-pill"><input type="radio" name="bought-view" value="inventory"><span>Inventory</span></label>
+        </div>
+        <button type="button" class="ghost-button add-haul" id="add-haul">+ Add purchase</button>
+      </div>
+
+      <div class="radio-grid" id="trip-filters" role="radiogroup" aria-label="Show">
+        <label class="radio-pill"><input type="radio" name="bought-filter" value="all" checked><span>All</span></label>
+        <label class="radio-pill"><input type="radio" name="bought-filter" value="stock"><span>In stock</span></label>
+        <label class="radio-pill"><input type="radio" name="bought-filter" value="sold"><span>Sold</span></label>
+      </div>
+      <p class="threshold-status" id="inv-message" hidden aria-live="polite"></p>
+
+      <div id="haul-list"></div>
+      <div id="inv-list" hidden></div>
+
+      <details class="sync-panel">
+        <summary>
+          <span>Google Sheet sync</span>
+          <span class="sync-status off" id="sync-status">Not connected</span>
+        </summary>
+
+        <div id="sync-setup">
+          <p class="hint hint-top">Keep your purchases in a Google Sheet you own, so they're backed up and the same on every device.</p>
+          <ol class="sync-steps">
+            <li>Make a <strong>new</strong> Google Sheet.</li>
+            <li>In the sheet, open <strong>Extensions → Apps Script</strong>.</li>
+            <li>Delete the code that's there and paste in the sync script.
+              <button type="button" class="ghost-button inline-button" id="sync-copy-script">Copy the script</button>
+              or <a href="google-sheet-sync/Code.gs" target="_blank" rel="noopener">open it here</a>.</li>
+            <li>Tap <button type="button" class="ghost-button inline-button" id="sync-generate">Generate a key</button>. Then in Apps Script go to <strong>Project Settings (gear) → Script Properties → Add script property</strong>, name it <code>SECRET</code> and paste the key as its value.</li>
+            <li>Click <strong>Deploy → New deployment → Web app</strong>. Set <em>Execute as: Me</em> and <em>Who has access: Anyone</em>, then deploy and copy the web app URL.</li>
+            <li>Paste the URL and key below and tap Connect.</li>
+          </ol>
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Web app URL</span>
+              <input type="text" id="sync-url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off" autocapitalize="off" spellcheck="false">
+            </label>
+            <label class="field">
+              <span class="field-label">Secret key</span>
+              <input type="password" id="sync-key" autocomplete="off" autocapitalize="off" spellcheck="false">
+            </label>
+          </div>
+          <button type="button" class="add-button sync-connect" id="sync-connect">Connect</button>
+          <p class="hint">The URL and key are saved only in this browser, never on the website or in its code. Anyone who has both can read and change the sheet, so keep them private.</p>
+        </div>
+
+        <div id="sync-connected" hidden>
+          <p class="hint hint-top">Changes save to your sheet automatically a moment after you make them. When you open the app, it loads the latest from the sheet.</p>
+          <div class="field-row">
+            <button type="button" class="ghost-button" id="sync-now">Sync now</button>
+            <button type="button" class="ghost-button" id="sync-disconnect">Disconnect this device</button>
+          </div>
+        </div>
+
+        <p class="threshold-status" id="sync-message" hidden></p>
+      </details>
+
+      <details class="sync-panel pricing-panel">
+        <summary>
+          <span>Booth pricing</span>
+          <span class="sync-status off" id="pricing-status"></span>
+        </summary>
+        <p class="hint hint-top">Sets the resell price for new items. If you sell through a booth or mall that takes a cut, enter it as commission so profit reflects it.</p>
+        <div class="field-row">
+          <label class="field field-narrow">
+            <span class="field-label">Price at</span>
+            <div class="unit-input"><input type="number" id="pricing-pct" min="0" max="100" step="1" inputmode="numeric"><span class="unit">% off retail</span></div>
+          </label>
+          <label class="field field-narrow">
+            <span class="field-label">Commission</span>
+            <div class="unit-input"><input type="number" id="pricing-commission" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0"><span class="unit">%</span></div>
+          </label>
+        </div>
+        <button type="button" class="ghost-button pricing-apply" id="pricing-apply">Apply this price to everything in stock</button>
+      </details>
+    </section>
+  </div>
 
 </div>
 
 <script src="script.js"></script>
+<script src="bought.js"></script>
 </body>
 </html>
