@@ -50,19 +50,51 @@
   // New items default to a resell price of X% off retail; an optional
   // commission (what a booth or mall keeps from each sale) is taken out of
   // potential profit and pre-filled as the fee when recording a sale.
+  // Booth rent is a fixed cost per week or month, so it comes out of total
+  // profit rather than out of any one item.
   const PRICING_KEY = 'therealtotal:pricing';
   const clampPct = (v, fallback) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : fallback; };
+  const DEFAULT_PRICING = { pctOff: 30, commission: 0, rent: 0, rentPeriod: 'month', rentStart: '' };
+
+  function cleanPricing(p) {
+    return {
+      pctOff: clampPct(p.pctOff, 30),
+      commission: clampPct(p.commission, 0),
+      rent: Math.max(0, round2(num(p.rent))),
+      rentPeriod: p.rentPeriod === 'week' ? 'week' : 'month',
+      rentStart: typeof p.rentStart === 'string' && DATE_RE.test(p.rentStart) ? p.rentStart : '',
+    };
+  }
 
   function loadPricing() {
-    try {
-      const p = JSON.parse(localStorage.getItem(PRICING_KEY)) || {};
-      return { pctOff: clampPct(p.pctOff, 30), commission: clampPct(p.commission, 0) };
-    } catch (e) { return { pctOff: 30, commission: 0 }; }
+    try { return cleanPricing(JSON.parse(localStorage.getItem(PRICING_KEY)) || {}); } catch (e) { return { ...DEFAULT_PRICING }; }
   }
 
   let pricing = loadPricing();
   const boothPrice = (unitRetail) => round2(unitRetail * (1 - pricing.pctOff / 100));
   const afterCommission = (amount) => amount * (1 - pricing.commission / 100);
+
+  const parseISO = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+  const toISO = (dt) => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+
+  // Rent is paid up front, so every period that has started counts in full:
+  // a booth started Sep 15 at $60/month has paid $60 on Oct 11 and $120 on Oct 15.
+  function rentSoFar() {
+    if (!pricing.rent || !pricing.rentStart) return { periods: 0, paid: 0, periodStart: '' };
+    const start = parseISO(pricing.rentStart);
+    const now = parseISO(today());
+    if (now < start) return { periods: 0, paid: 0, periodStart: '' };
+    let periods;
+    let periodStart;
+    if (pricing.rentPeriod === 'week') {
+      periods = Math.floor(Math.round((now - start) / 86400000) / 7) + 1;
+      periodStart = new Date(start.getFullYear(), start.getMonth(), start.getDate() + (periods - 1) * 7);
+    } else {
+      periods = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth()) + (now.getDate() >= start.getDate() ? 1 : 0);
+      periodStart = new Date(start.getFullYear(), start.getMonth() + periods - 1, start.getDate());
+    }
+    return { periods, paid: round2(periods * pricing.rent), periodStart: toISO(periodStart) };
+  }
 
   // ---------- Data cleaning ----------
   // Everything loaded from storage or the sheet goes through these, so bad or
@@ -235,9 +267,15 @@
       ${tile('Spent', money(t.paid), `${t.units} item${t.units === 1 ? '' : 's'} · incl. ${money(t.tax)} tax`)}
       ${tile('Saved', money(t.saved), `${pct(t.saved, t.retail)}% off ${money(t.retail)} retail`, 'good')}
       ${tile('Sold', money(t.soldTotal), `${t.soldUnits} item${t.soldUnits === 1 ? '' : 's'} sold`)}
-      ${tile('Profit', signedMoney(t.profit), 'after cost & fees', t.profit < 0 ? 'bad' : 'good')}
+      ${(() => {
+        const rent = rentSoFar();
+        if (!rent.paid) return tile('Profit', signedMoney(t.profit), 'after cost & fees', t.profit < 0 ? 'bad' : 'good');
+        const net = t.profit - rent.paid;
+        return tile('Profit', signedMoney(net), `after cost, fees & ${money(rent.paid)} rent`, net < 0 ? 'bad' : 'good');
+      })()}
       ${tile('In stock', `${t.leftUnits}`, `${money(t.leftCost)} cost · ${signedMoney(t.potential)} potential`)}
     `;
+    renderRentStatus();
   }
 
   function haulTotalsText(haulId) {
@@ -515,23 +553,58 @@
   // ---------- Booth pricing controls ----------
   const pricingPct = $('#pricing-pct');
   const pricingCommission = $('#pricing-commission');
+  const pricingRent = $('#pricing-rent');
+  const pricingRentPeriod = $('#pricing-rent-period');
+  const pricingRentStart = $('#pricing-rent-start');
   const pricingStatus = $('#pricing-status');
+  const rentStatus = $('#rent-status');
 
   function renderPricingStatus() {
-    pricingStatus.textContent = `${pricing.pctOff}% off retail` + (pricing.commission ? ` · ${pricing.commission}% commission` : '');
+    pricingStatus.textContent = `${pricing.pctOff}% off retail`
+      + (pricing.commission ? ` · ${pricing.commission}% commission` : '')
+      + (pricing.rent ? ` · ${money(pricing.rent)}/${pricing.rentPeriod === 'week' ? 'wk' : 'mo'} rent` : '');
+  }
+
+  // How this rent period's sales stack up against its rent.
+  function renderRentStatus() {
+    if (!pricing.rent) { rentStatus.hidden = true; return; }
+    rentStatus.hidden = false;
+    const rent = rentSoFar();
+    if (!pricing.rentStart) {
+      rentStatus.textContent = 'Add the date your booth started to track rent against your sales.';
+      rentStatus.className = 'threshold-status unmet';
+      return;
+    }
+    if (!rent.periods) {
+      rentStatus.textContent = `Rent starts ${formatDate(pricing.rentStart)}.`;
+      rentStatus.className = 'threshold-status unmet';
+      return;
+    }
+    const earned = data.items
+      .filter((it) => it.soldQty > 0 && it.soldDate >= rent.periodStart)
+      .reduce((s, it) => s + itemCalc(it).profit, 0);
+    const label = `This ${pricing.rentPeriod} (since ${formatDate(rent.periodStart)})`;
+    const left = pricing.rent - earned;
+    rentStatus.textContent = left > 0.004
+      ? `${label}: ${money(earned)} profit vs ${money(pricing.rent)} rent — ${money(left)} to go.`
+      : `${label}: rent covered — ${signedMoney(-left)} profit after rent.`;
+    rentStatus.className = `threshold-status ${left > 0.004 ? 'unmet' : 'met'}`;
   }
 
   function onPricingInput() {
-    pricing = {
-      pctOff: clampPct(pricingPct.value, pricing.pctOff),
-      commission: clampPct(pricingCommission.value, 0),
-    };
+    pricing = cleanPricing({
+      pctOff: pricingPct.value === '' ? pricing.pctOff : pricingPct.value,
+      commission: pricingCommission.value,
+      rent: pricingRent.value,
+      rentPeriod: pricingRentPeriod.value,
+      rentStart: pricingRentStart.value,
+    });
     try { localStorage.setItem(PRICING_KEY, JSON.stringify(pricing)); } catch (e) { /* storage unavailable */ }
     renderPricingStatus();
     render();
   }
-  pricingPct.addEventListener('change', onPricingInput);
-  pricingCommission.addEventListener('change', onPricingInput);
+  [pricingPct, pricingCommission, pricingRent, pricingRentPeriod, pricingRentStart]
+    .forEach((el) => el.addEventListener('change', onPricingInput));
 
   $('#pricing-apply').addEventListener('click', () => {
     const inStock = data.items.filter((it) => it.soldQty < it.qty && it.unitRetail > 0);
@@ -879,6 +952,9 @@
   setTab(startTab);
   pricingPct.value = pricing.pctOff;
   pricingCommission.value = pricing.commission || '';
+  pricingRent.value = pricing.rent || '';
+  pricingRentPeriod.value = pricing.rentPeriod;
+  pricingRentStart.value = pricing.rentStart;
   renderPricingStatus();
   let startView = 'trips';
   try { startView = localStorage.getItem(VIEW_KEY) || 'trips'; } catch (e) { /* storage unavailable */ }

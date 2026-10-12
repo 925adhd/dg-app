@@ -824,8 +824,76 @@ select:focus, input:focus {
   justify-content: space-between;
   gap: 10px;
 }
-.add-haul { color: var(--ink); font-weight: 600; }
-.add-haul:hover { color: var(--ink); border-color: var(--ink); }
+/* View switch: a smaller version of the main tab bar, so it reads as
+   "which view" rather than another filter. */
+.segmented {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.segment, .filter-chip { position: relative; }
+.segment input, .filter-chip input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  cursor: pointer;
+}
+.segment span {
+  display: block;
+  padding: 7px 16px;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.segment input:checked + span {
+  background: var(--dg-yellow);
+  border-color: var(--dg-black);
+  color: var(--dg-black);
+}
+.segment input:focus-visible + span,
+.filter-chip input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Filters: quieter chips that sit beside the view switch. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 auto;
+}
+.filter-chip span {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  color: var(--muted);
+  border: 1px solid transparent;
+}
+.filter-chip input:checked + span {
+  color: var(--ink);
+  background: var(--paper);
+  border-color: var(--line);
+  font-weight: 600;
+}
+.filter-chip:hover span { color: var(--ink); }
+
+.add-haul {
+  margin-left: auto;
+  font-family: var(--font-ui);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--dg-black);
+  background: var(--dg-yellow);
+  border: 2px solid var(--dg-black);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.add-haul:hover { background: var(--dg-yellow-strong); }
 
 .empty-note {
   background: var(--paper);
@@ -1035,3 +1103,19 @@ select:focus, input:focus {
 .check-chip.chip-linked input { cursor: not-allowed; }
 .deal-fields-row:has(.group-deal) { align-items: flex-start; }
 .deal-fields-row:has(.group-deal) .deal-slot-tag { padding: 4px 0 0; }
+
+/* ---------- Booth rent ---------- */
+.rent-row { margin-top: 12px; }
+.date-input {
+  font-family: var(--font-ui);
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  width: 100%;
+  min-width: 0;
+}
+.date-input:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+#rent-status { margin-top: 12px; }

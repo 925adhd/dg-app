@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow">
-<title>The Real Total — Dollar General Coupon Calculator</title>
+<title>The Real Total | DG Coupons</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -142,17 +142,16 @@
       <div class="stat-grid" id="bought-summary" aria-live="polite"></div>
 
       <div class="bought-toolbar">
-        <div class="radio-grid" role="radiogroup" aria-label="View">
-          <label class="radio-pill"><input type="radio" name="bought-view" value="trips" checked><span>By trip</span></label>
-          <label class="radio-pill"><input type="radio" name="bought-view" value="inventory"><span>Inventory</span></label>
+        <div class="segmented" role="radiogroup" aria-label="View">
+          <label class="segment"><input type="radio" name="bought-view" value="trips" checked><span>By trip</span></label>
+          <label class="segment"><input type="radio" name="bought-view" value="inventory"><span>Inventory</span></label>
         </div>
-        <button type="button" class="ghost-button add-haul" id="add-haul">+ Add purchase</button>
-      </div>
-
-      <div class="radio-grid" id="trip-filters" role="radiogroup" aria-label="Show">
-        <label class="radio-pill"><input type="radio" name="bought-filter" value="all" checked><span>All</span></label>
-        <label class="radio-pill"><input type="radio" name="bought-filter" value="stock"><span>In stock</span></label>
-        <label class="radio-pill"><input type="radio" name="bought-filter" value="sold"><span>Sold</span></label>
+        <div class="filter-chips" id="trip-filters" role="radiogroup" aria-label="Show">
+          <label class="filter-chip"><input type="radio" name="bought-filter" value="all" checked><span>All</span></label>
+          <label class="filter-chip"><input type="radio" name="bought-filter" value="stock"><span>In stock</span></label>
+          <label class="filter-chip"><input type="radio" name="bought-filter" value="sold"><span>Sold</span></label>
+        </div>
+        <button type="button" class="add-haul" id="add-haul">+ Add purchase</button>
       </div>
       <p class="threshold-status" id="inv-message" hidden aria-live="polite"></p>
 
@@ -207,7 +206,7 @@
           <span>Booth pricing</span>
           <span class="sync-status off" id="pricing-status"></span>
         </summary>
-        <p class="hint hint-top">Sets the resell price for new items. If you sell through a booth or mall that takes a cut, enter it as commission so profit reflects it.</p>
+        <p class="hint hint-top">Sets the resell price for new items. If you sell through a booth or mall, enter its commission and rent so profit reflects them.</p>
         <div class="field-row">
           <label class="field field-narrow">
             <span class="field-label">Price at</span>
@@ -218,6 +217,24 @@
             <div class="unit-input"><input type="number" id="pricing-commission" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0"><span class="unit">%</span></div>
           </label>
         </div>
+        <div class="field-row rent-row">
+          <label class="field field-narrow">
+            <span class="field-label">Booth rent</span>
+            <div class="unit-input"><span class="unit">$</span><input type="number" id="pricing-rent" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></div>
+          </label>
+          <label class="field field-narrow">
+            <span class="field-label">Paid every</span>
+            <select id="pricing-rent-period">
+              <option value="month">Month</option>
+              <option value="week">Week</option>
+            </select>
+          </label>
+          <label class="field field-narrow">
+            <span class="field-label">Booth started</span>
+            <input type="date" id="pricing-rent-start" class="date-input">
+          </label>
+        </div>
+        <p class="threshold-status" id="rent-status" hidden></p>
         <button type="button" class="ghost-button pricing-apply" id="pricing-apply">Apply this price to everything in stock</button>
       </details>
     </section>
