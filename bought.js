@@ -41,6 +41,8 @@
   // from the sheet are treated as text, never as markup.
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
+  // Profit as a share of what it sold for, e.g. " (62%)".
+  const marginText = (profit, sold) => (sold > 0 ? ` (${pct(profit, sold)}%)` : '');
   const blankIfZero = (n) => (n ? String(round2(n)) : '');
 
   function formatDate(iso) {
@@ -291,9 +293,9 @@
       ${tile('Sold', money(t.soldTotal), `${t.soldUnits} item${t.soldUnits === 1 ? '' : 's'} sold`)}
       ${(() => {
         const rent = rentSoFar();
-        if (!rent.paid) return tile('Profit', signedMoney(t.profit), 'after cost & fees', t.profit < 0 ? 'bad' : 'good');
+        if (!rent.paid) return tile('Profit', signedMoney(t.profit), `after cost & fees${t.soldTotal ? ` · ${pct(t.profit, t.soldTotal)}% of sales` : ''}`, t.profit < 0 ? 'bad' : 'good');
         const net = t.profit - rent.paid;
-        return tile('Profit', signedMoney(net), `after cost, fees & ${money(rent.paid)} rent`, net < 0 ? 'bad' : 'good');
+        return tile('Profit', signedMoney(net), `after cost, fees & ${money(rent.paid)} rent${t.soldTotal ? ` · ${pct(net, t.soldTotal)}% of sales` : ''}`, net < 0 ? 'bad' : 'good');
       })()}
     `;
     renderRentStatus();
@@ -302,7 +304,7 @@
   function haulTotalsText(haulId) {
     const t = totalsFor(itemsOf(haulId));
     return `${t.units} item${t.units === 1 ? '' : 's'} · Paid ${money(t.paid)} · Retail ${money(t.retail)} · Saved ${pct(t.saved, t.retail)}%`
-      + (t.soldUnits ? ` · Profit ${signedMoney(t.profit)}` : '');
+      + (t.soldUnits ? ` · Profit ${signedMoney(t.profit)}${marginText(t.profit, t.soldTotal)}` : '');
   }
 
   const STATUS_LABELS = { unsold: 'In stock', partial: 'Partly sold', sold: 'Sold' };
@@ -314,7 +316,7 @@
       `<span>Cost ${money(c.unitCost)} each${it.haulId && it.totalPaid ? (it.taxPaid ? ' with tax' : ' · no tax added yet') : ''}</span>`,
       `<span class="${pct(c.saved, c.retail) >= 50 ? 'good' : 'bad'}">Saved ${pct(c.saved, c.retail)}%</span>`,
     ];
-    if (it.soldQty > 0) parts.push(`<span class="${c.profit < 0 ? 'bad' : 'good'}">Profit ${signedMoney(c.profit)}</span>`);
+    if (it.soldQty > 0) parts.push(`<span class="${c.profit < 0 ? 'bad' : 'good'}">Profit ${signedMoney(c.profit)}${marginText(c.profit, it.soldTotal)}</span>`);
     if (c.left > 0) parts.push(`<span class="muted">${c.left > 1 ? `${c.left} left` : '1 left'} · potential ${signedMoney(c.potential)}</span>`);
     if (c.belowCost) parts.push(`<span class="below-cost">Below cost — price at ${money(minPrice(c.unitCost))}+ to break even</span>`);
     return parts.join('');
@@ -507,7 +509,7 @@
     if (!g.onHand) {
       const sold = g.lots.reduce((t, it) => ({ units: t.units + it.soldQty, total: t.total + it.soldTotal, profit: t.profit + itemCalc(it).profit }), { units: 0, total: 0, profit: 0 });
       return `<span>Sold ${sold.units} for ${money(sold.total)}</span>`
-        + `<span class="${sold.profit < 0 ? 'bad' : 'good'}">Profit ${signedMoney(sold.profit)}</span>`;
+        + `<span class="${sold.profit < 0 ? 'bad' : 'good'}">Profit ${signedMoney(sold.profit)}${marginText(sold.profit, sold.total)}</span>`;
     }
     return `<span>Avg cost ${money(g.onHand ? g.cost / g.onHand : 0)}</span>`
       + `<span>Retail ${money(g.lots[0].unitRetail)}</span>`
