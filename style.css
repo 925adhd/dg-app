@@ -972,6 +972,27 @@ select:focus, input:focus {
 .add-buttons .add-haul { margin-left: 0; }
 .add-loose { background: var(--paper); color: var(--ink); }
 .add-loose:hover { background: var(--tag-bg); }
+.barcode-field { position: relative; display: block; }
+.barcode-field input { width: 100%; padding-right: 40px; }
+.barcode-scan {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.barcode-scan:hover { background: var(--tag-bg); }
+.barcode-scan:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .haul-loose-title { margin: 0; font-size: 1rem; font-weight: 700; }
 .scan-into { margin: -4px 0 12px; }
 

@@ -331,7 +331,7 @@
         <div class="b-grid b-grid-3">
           <label><span class="field-label">Location</span><input type="text" data-f="location" placeholder="e.g. Bin 3" maxlength="${MAX_TEXT}" value="${esc(it.location)}"></label>
           <label><span class="field-label">Notes</span><input type="text" data-f="notes" placeholder="e.g. dented box" maxlength="${MAX_TEXT}" value="${esc(it.notes)}"></label>
-          <label><span class="field-label">Barcode</span><input type="text" data-f="upc" inputmode="numeric" placeholder="Scan or type" maxlength="14" autocomplete="off" value="${esc(it.upc)}"></label>
+          <label><span class="field-label">Barcode</span><span class="barcode-field"><input type="text" data-f="upc" inputmode="numeric" placeholder="Scan or type" maxlength="14" autocomplete="off" value="${esc(it.upc)}"><button type="button" class="barcode-scan" data-action="scan-upc" aria-label="Scan this item’s barcode" title="Scan this item’s barcode">${BARCODE_ICON}</button></span></label>
         </div>
         <details class="b-sale"${it.soldQty > 0 ? ' open' : ''}>
           <summary>Sale info</summary>
@@ -786,6 +786,10 @@
       if (added) $('.item-name', added).focus();
     } else if (btn.dataset.action === 'scan-items') {
       scanIntoHaul(haulId);
+    } else if (btn.dataset.action === 'scan-upc') {
+      e.preventDefault(); // don't let the tap fall through to the label's input
+      const it = data.items.find((i) => i.id === btn.closest('.b-item').dataset.item);
+      if (it) scanItemBarcode(it);
     } else if (btn.dataset.action === 'delete-item') {
       const id = btn.closest('.b-item').dataset.item;
       const it = data.items.find((i) => i.id === id);
@@ -911,6 +915,33 @@
 
   // The newest item you've saved with this barcode, to reuse its name and price.
   const knownItem = (code, except) => data.items.slice().reverse().find((i) => i !== except && i.upc === code && i.name);
+
+  // The scan icon in an item's Barcode box: fills in that one item's barcode,
+  // plus its name, photo and retail price if those are still empty.
+  function scanItemBarcode(it) {
+    window.openScanner({
+      title: it.name ? `Scan the barcode for ${it.name}` : 'Scan this item’s barcode',
+      hint: 'Line the barcode up inside the box.',
+      onCode: async (code) => {
+        if (!data.items.includes(it)) return { close: true };
+        it.upc = code;
+        const known = knownItem(code, it);
+        if (known) {
+          if (!it.name) it.name = known.name;
+          if (!it.photo) it.photo = known.photo;
+          if (!it.unitRetail && known.unitRetail) it.unitRetail = known.unitRetail;
+        }
+        if (!it.name || !it.photo) {
+          const found = await lookUpOnline(code);
+          if (!it.name && found.name) it.name = cleanText(found.name);
+          if (!it.photo) it.photo = cleanPhoto(found.image);
+        }
+        save();
+        render();
+        return { close: true };
+      },
+    });
+  }
 
   // `onAdded` runs as soon as the item is in the trip, before any online lookup.
   async function addScannedItem(haulId, code, onAdded = () => {}) {
@@ -1268,6 +1299,8 @@
     setTab('bought');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
+
+  const BARCODE_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10 8v8M13 8v8M16.5 8v8"/></svg>';
 
   // ---------- Item photos ----------
   const CAMERA_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
