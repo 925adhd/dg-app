@@ -79,6 +79,40 @@
   const boothPrice = (unitRetail) => round2(unitRetail * (1 - pricing.pctOff / 100));
   const afterCommission = (amount) => amount * (1 - pricing.commission / 100);
 
+  // ---------- Categories ----------
+  // Your own list (laundry, body wash…), so a category can exist before any
+  // item is in it. Items keep the name as text; a category on an item that
+  // isn't in the list (say, typed into the sheet) still shows everywhere.
+  const CATEGORY_KEY = 'therealtotal:categories';
+  const catKey = (c) => String(c || '').trim().toLowerCase();
+  // The "+ New category…" choice in a category menu. Real categories are
+  // trimmed, so one can never start with a space and clash with this.
+  const NEW_CATEGORY = ' new';
+
+  function cleanCategories(list) {
+    const seen = new Set();
+    return (Array.isArray(list) ? list.slice(0, 500) : [])
+      .map((c) => cleanText(c).trim())
+      .filter((c) => c && !seen.has(catKey(c)) && seen.add(catKey(c)))
+      .sort((a, b) => a.localeCompare(b));
+  }
+
+  let categories = [];
+  try { categories = cleanCategories(JSON.parse(localStorage.getItem(CATEGORY_KEY))); } catch (e) { /* storage unavailable */ }
+
+  // Your list plus any category an item has that isn't in it.
+  const allCategories = () => cleanCategories([...categories, ...data.items.map((it) => it.category)]);
+  // A category's name as you entered it, or '' if there's no such category.
+  const categoryNamed = (text) => allCategories().find((c) => catKey(c) === catKey(text)) || '';
+
+  // `mixed` is for a product whose purchases are in different categories.
+  function categoryOptionsHTML(current, mixed = false) {
+    return (mixed ? '<option value="" selected disabled>Mixed</option>' : '')
+      + `<option value=""${!mixed && !current ? ' selected' : ''}>No category</option>`
+      + allCategories().map((c) => `<option value="${esc(c)}"${!mixed && catKey(c) === catKey(current) ? ' selected' : ''}>${esc(c)}</option>`).join('')
+      + `<option value="${NEW_CATEGORY}">+ New category…</option>`;
+  }
+
   const parseISO = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
   const toISO = (dt) => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
 
@@ -133,6 +167,7 @@
       id: validId(i.id) ? i.id : newId(),
       haulId: loose ? '' : i.haulId,
       name: cleanText(i.name),
+      category: cleanText(i.category).trim(),
       upc: cleanUpc(i.upc),
       photo: cleanPhoto(i.photo),
       qty,
@@ -230,6 +265,7 @@
   const searchInput = $('#bought-search');
   const invList = $('#inv-list');
   const invMessage = $('#inv-message');
+  const catFilters = $('#cat-filters');
   const syncStatusEl = $('#sync-status');
   const syncSetup = $('#sync-setup');
   const syncConnected = $('#sync-connected');
@@ -365,9 +401,10 @@
               : field('Paid total (with tax)', 'totalPaid', blankIfZero(it.totalPaid))}
             ${field('Resell at (each)', 'resalePrice', blankIfZero(it.resalePrice))}
           </div>
-          <div class="b-grid b-grid-3">
+          <div class="b-grid b-grid-2">
             <label><span class="field-label">Location</span><input type="text" data-f="location" placeholder="e.g. Bin 3" maxlength="${MAX_TEXT}" value="${esc(it.location)}"></label>
             <label><span class="field-label">Notes</span><input type="text" data-f="notes" placeholder="e.g. dented box" maxlength="${MAX_TEXT}" value="${esc(it.notes)}"></label>
+            <label><span class="field-label">Category</span><select data-f="category">${categoryOptionsHTML(it.category)}</select></label>
             <label><span class="field-label">Barcode</span><span class="barcode-field"><input type="text" data-f="upc" inputmode="numeric" placeholder="Scan or type" maxlength="14" autocomplete="off" value="${esc(it.upc)}"><button type="button" class="barcode-scan" data-action="scan-upc" aria-label="Scan this item’s barcode" title="Scan this item’s barcode">${BARCODE_ICON}</button></span></label>
           </div>
           <details class="b-sale"${it.soldQty > 0 ? ' open' : ''}>
@@ -441,7 +478,7 @@
   // One search box at the top of the tab drives both views.
   const searchQuery = () => searchInput.value.trim().toLowerCase();
   const has = (text, q) => String(text || '').toLowerCase().includes(q);
-  const itemSearchMatch = (it, q) => !q || has(it.name, q) || has(it.location, q) || has(it.notes, q) || has(it.platform, q) || has(it.upc, q);
+  const itemSearchMatch = (it, q) => !q || has(it.name, q) || has(it.category, q) || has(it.location, q) || has(it.notes, q) || has(it.platform, q) || has(it.upc, q);
 
   function renderHauls() {
     const mode = filterMode();
@@ -499,7 +536,9 @@
       });
       const prices = Array.from(new Set(g.lots.map((it) => round2(it.resalePrice))));
       const places = Array.from(new Set(g.lots.map((it) => it.location.trim()).filter(Boolean)));
-      return { ...g, onHand, cost, potential, prices, places, haulDate };
+      const cats = Array.from(new Set(g.lots.map((it) => catKey(it.category))));
+      const category = cats.length === 1 ? g.lots[0].category : '';
+      return { ...g, onHand, cost, potential, prices, places, category, mixedCategory: cats.length > 1, haulDate };
     }).sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -546,6 +585,10 @@
           ${soldOut ? '' : '<button type="button" class="remove-item" data-action="remove-stock" aria-label="Remove from inventory">&times;</button>'}
         </div>
         <div class="b-foot">${invFootHTML(g)}</div>
+        <div class="b-grid b-grid-2 inv-cat-row">
+          <label><span class="field-label">Name${g.lots.length > 1 ? ` (all ${g.lots.length})` : ''}</span><input type="text" class="inv-rename" maxlength="${MAX_TEXT}" value="${esc(g.name)}"></label>
+          <label><span class="field-label">Category</span><select class="inv-category">${categoryOptionsHTML(g.category, g.mixedCategory)}</select></label>
+        </div>
         ${g.lots.length === 1 ? `<button type="button" class="ghost-button inv-edit-one" data-action="edit-lot" data-item="${esc(g.lots[0].id)}">Edit details</button>` : ''}
         ${soldOut ? '' : `<div class="b-grid b-grid-2">
           <label><span class="field-label">Resell at (each)</span><input type="number" class="inv-resell" min="0" step="0.01" inputmode="decimal" value="${g.prices.length === 1 ? esc(blankIfZero(g.prices[0])) : ''}" placeholder="${g.prices.length === 1 ? '0.00' : 'mixed'}"></label>
@@ -569,18 +612,43 @@
       </div>`;
   }
 
-  function renderInventory() {
-    invGroups = buildInventory();
+  // The category picked from the chips above Inventory ('' = all).
+  let invCategory = '';
+
+  // What Inventory shows, and what the price list exports. Searching a
+  // category's exact name shows only that category.
+  function shownGroups() {
     const q = searchQuery();
     const mode = filterMode();
+    const searchedCat = !invCategory && categoryNamed(q);
+    const cat = invCategory || searchedCat;
     const inMode = (g) => (mode === 'stock' ? g.onHand > 0 : mode === 'sold' ? g.lots.some((it) => it.soldQty > 0) : true);
+    const inCat = (g) => !cat || g.lots.some((it) => catKey(it.category) === catKey(cat));
+    const matches = (g) => searchedCat || !q || has(g.name, q) || g.lots.some((it) => itemSearchMatch(it, q));
     const shown = invGroups
       .map((g, i) => ({ g, i }))
-      .filter(({ g }) => inMode(g) && (!q || has(g.name, q) || g.lots.some((it) => itemSearchMatch(it, q))));
+      .filter(({ g }) => inMode(g) && inCat(g) && matches(g));
+    return { shown, category: cat };
+  }
+
+  function renderCategoryChips() {
+    const list = allCategories();
+    if (invCategory && !list.some((c) => catKey(c) === catKey(invCategory))) invCategory = '';
+    catFilters.hidden = viewMode() !== 'inventory' || !list.length;
+    const chip = (value, label) => `<label class="filter-chip"><input type="radio" name="inv-category" value="${esc(value)}"${catKey(value) === catKey(invCategory) ? ' checked' : ''}><span>${esc(label)}</span></label>`;
+    catFilters.innerHTML = chip('', 'All categories') + list.map((c) => chip(c, c)).join('');
+  }
+
+  function renderInventory() {
+    invGroups = buildInventory();
+    renderCategoryChips();
+    const q = searchQuery();
+    const mode = filterMode();
+    const { shown } = shownGroups();
     const none = { stock: 'Nothing in stock.', sold: 'Nothing sold yet.', all: 'Nothing here yet.' }[mode] || 'Nothing here yet.';
     invList.innerHTML = shown.length
       ? shown.map(({ g, i }) => invGroupHTML(g, i)).join('')
-      : `<p class="empty-note">${q ? 'Nothing matches that search.' : `${none} Add a haul or a single item to fill your inventory.`}</p>`;
+      : `<p class="empty-note">${q ? 'Nothing matches that search.' : invCategory ? `Nothing in ${esc(invCategory)} here.` : `${none} Add a haul or a single item to fill your inventory.`}</p>`;
     showPhotos(invList);
   }
 
@@ -630,6 +698,137 @@
     }
     save();
     renderSummary();
+  });
+
+  // Name and category apply to every purchase of the product at once.
+  invList.addEventListener('change', async (e) => {
+    const el = e.target;
+    const card = el.closest('.inv-item');
+    const g = card && invGroups[Number(card.dataset.group)];
+    if (!g) return;
+    if (el.classList.contains('inv-rename')) {
+      const name = cleanText(el.value.trim());
+      if (!name || name === g.name) { el.value = g.name; return; }
+      // Renaming to a product you already have puts the two together.
+      const joins = invGroups.find((o) => o !== g && o.key === productKey(name));
+      g.lots.forEach((it) => { it.name = name; });
+      save();
+      render();
+      showInvMessage(joins ? `Renamed and combined with ${joins.name}.` : `Renamed to ${name}.`, 'met');
+    } else if (el.classList.contains('inv-category')) {
+      let cat = el.value;
+      if (cat === NEW_CATEGORY) {
+        cat = await askNewCategory();
+        if (!cat) { el.innerHTML = categoryOptionsHTML(g.category, g.mixedCategory); return; }
+      }
+      g.lots.forEach((it) => { it.category = cat; });
+      save();
+      render();
+    }
+  });
+
+  catFilters.addEventListener('change', (e) => {
+    if (e.target.name !== 'inv-category') return;
+    invCategory = e.target.value;
+    renderInventory();
+  });
+
+  // Adds a category to your list (or finds the one already there by that
+  // name) and returns its name.
+  function addCategory(text) {
+    const name = cleanText(String(text || '').trim());
+    if (!name) return '';
+    const existing = categoryNamed(name);
+    if (existing) return existing;
+    categories = cleanCategories([...categories, name]);
+    saveCategories();
+    return name;
+  }
+
+  async function askNewCategory() {
+    const name = await window.appPrompt({
+      title: 'New category',
+      input: { placeholder: 'e.g. Laundry', maxLength: MAX_TEXT },
+      confirmText: 'Add', cancelText: 'Cancel',
+    });
+    return name ? addCategory(name) : '';
+  }
+
+  function saveCategories() {
+    try { localStorage.setItem(CATEGORY_KEY, JSON.stringify(categories)); } catch (e) { /* storage unavailable */ }
+    noteLocalChanges();
+    scheduleSync();
+    renderCategoryPanel();
+  }
+
+  // Categories that came from the Google Sheet.
+  function loadCategories(list) {
+    const next = cleanCategories(list);
+    if (JSON.stringify(next) === JSON.stringify(categories)) return;
+    categories = next;
+    try { localStorage.setItem(CATEGORY_KEY, JSON.stringify(categories)); } catch (e) { /* storage unavailable */ }
+    render();
+  }
+
+  // ---------- Categories panel ----------
+  const categoryList = $('#category-list');
+  const categoryNew = $('#category-new');
+
+  function renderCategoryPanel() {
+    const list = allCategories();
+    $('#category-status').textContent = list.length ? `${list.length} categor${list.length === 1 ? 'y' : 'ies'}` : 'None yet';
+    categoryList.innerHTML = list.map((c) => {
+      const n = data.items.filter((it) => catKey(it.category) === catKey(c)).length;
+      return `<li class="scenario-row" data-cat="${esc(c)}">
+          <span class="cat-name">${esc(c)}<span class="cat-count">${n} item${n === 1 ? '' : 's'}</span></span>
+          <button type="button" class="ghost-button inline-button" data-action="rename-cat">Rename</button>
+          <button type="button" class="remove-item" data-action="delete-cat" aria-label="Delete ${esc(c)}">&times;</button>
+        </li>`;
+    }).join('');
+  }
+
+  function onAddCategory() {
+    if (!categoryNew.value.trim()) return;
+    addCategory(categoryNew.value);
+    categoryNew.value = '';
+    render();
+  }
+  $('#category-add').addEventListener('click', onAddCategory);
+  categoryNew.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); onAddCategory(); } });
+
+  categoryList.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action]');
+    const row = btn && btn.closest('[data-cat]');
+    if (!row) return;
+    const old = row.dataset.cat;
+    const inIt = data.items.filter((it) => catKey(it.category) === catKey(old));
+    if (btn.dataset.action === 'rename-cat') {
+      const name = cleanText((await window.appPrompt({
+        title: `Rename ${old}`,
+        input: { value: old, maxLength: MAX_TEXT },
+        confirmText: 'Rename', cancelText: 'Cancel',
+      })) || '');
+      if (!name || name === old) return;
+      // Renaming to a category you already have puts the two together.
+      const other = catKey(name) !== catKey(old) && categoryNamed(name);
+      const target = other || name;
+      categories = cleanCategories([...categories.filter((c) => catKey(c) !== catKey(old)), target]);
+      inIt.forEach((it) => { it.category = target; });
+      if (catKey(invCategory) === catKey(old)) invCategory = target;
+    } else if (btn.dataset.action === 'delete-cat') {
+      if (!await window.appConfirm({
+        title: `Delete ${old}?`,
+        message: inIt.length ? `Its ${inIt.length} item${inIt.length === 1 ? '' : 's'} stay in your inventory, just without a category.` : '',
+        confirmText: 'Delete', cancelText: 'Keep', danger: true,
+      })) return;
+      categories = categories.filter((c) => catKey(c) !== catKey(old));
+      inIt.forEach((it) => { it.category = ''; });
+    } else {
+      return;
+    }
+    if (inIt.length) save();
+    saveCategories();
+    render();
   });
 
   // Takes a product's unsold units out of stock. Units already sold stay, so
@@ -762,8 +961,11 @@
   }
 
   async function exportPriceSheet() {
-    const groups = buildInventory().filter((g) => g.onHand > 0);
-    if (!groups.length) { showInvMessage('Nothing in stock to put on a price list.', 'unmet'); return; }
+    // Exactly what Inventory is showing (search and category), in stock only.
+    invGroups = buildInventory();
+    const { shown, category } = shownGroups();
+    const groups = shown.map(({ g }) => g).filter((g) => g.onHand > 0);
+    if (!groups.length) { showInvMessage('Nothing in stock here to put on a price list.', 'unmet'); return; }
     const btn = $('#export-sheet');
     btn.disabled = true;
     showInvMessage('Making your price list…', '');
@@ -800,7 +1002,7 @@
 
       const header = () => {
         let y = M;
-        doc.setFont('helvetica', 'bold').setFontSize(18).text('Available items', M, y + 14);
+        doc.setFont('helvetica', 'bold').setFontSize(18).text(category ? `Available items: ${category}` : 'Available items', M, y + 14);
         doc.setFont('helvetica', 'normal').setFontSize(10).text(dateText, M, y + 30);
         y += 50;
         doc.setFont('helvetica', 'bold').setFontSize(10);
@@ -840,7 +1042,9 @@
         doc.setDrawColor(160).setLineWidth(0.5).line(M, y, pageW - M, y);
       });
 
-      doc.save(`Price list ${today()}.pdf`);
+      // Characters a file name can't hold are left out.
+      const fileCat = category.replace(/[^\w ,&'-]/g, '').trim();
+      doc.save(`Price list${fileCat ? ` ${fileCat}` : ''} ${today()}.pdf`);
       showInvMessage('Price list saved.', 'met');
     } catch (err) {
       showInvMessage(err.message || 'Couldn’t make the price list.', 'unmet');
@@ -953,6 +1157,7 @@
     addHaulBtn.hidden = inv;
     $('#add-loose').hidden = !inv;
     $('#export-sheet').hidden = !inv;
+    catFilters.hidden = true;
     filterInputs.forEach((r) => { r.checked = r.value === viewFilter[inv ? 'inventory' : 'trips']; });
     haulList.hidden = inv;
     invList.hidden = !inv;
@@ -965,6 +1170,7 @@
 
   function render() {
     renderSummary();
+    renderCategoryPanel();
     if (viewMode() === 'inventory') renderInventory(); else renderHauls();
     refreshItemEditor();
   }
@@ -999,6 +1205,13 @@
     const f = el.dataset.f;
     const it = f && itemEl && data.items.find((i) => i.id === itemEl.dataset.item);
     if (!it) return null;
+    if (f === 'category' && el.value === NEW_CATEGORY) {
+      askNewCategory().then((name) => {
+        if (name && data.items.includes(it)) { it.category = name; save(); }
+        el.innerHTML = categoryOptionsHTML(it.category);
+      });
+      return null;
+    }
 
     // A haul item's price is typed before tax; any tax already spread onto it stays.
     if (f === 'paidBeforeTax') it.totalPaid = round2(cleanMoney(el.value) + it.taxPaid);
@@ -1882,8 +2095,8 @@
   // ---------- Calculator build ----------
   // The calculator (script.js) owns its working copy and saved scenarios;
   // the sync just carries them to and from the sheet's "Calculator" tab as
-  // one JSON string. Booth pricing and the merge times below ride along in
-  // the same string.
+  // one JSON string. Booth pricing, your categories and the merge times
+  // below ride along in the same string.
   const calc = window.calcSync;
   document.addEventListener('calc:change', () => {
     noteLocalChanges();
@@ -1900,13 +2113,14 @@
 
   // ---------- Merging, one record at a time ----------
   // Each haul, item and saved scenario — plus the calculator's working copy
-  // and booth pricing — remembers when it last changed on this device. A sync
+  // booth pricing and the category list — remembers when it last changed on this device. A sync
   // keeps whichever side changed each one most recently, and deleted ones
   // are remembered so another device can't bring them back.
   const META_KEY = 'therealtotal:sync-meta';
   const BUILD_KEY = '~build';
   const PRICING_KEY_SYNC = '~pricing';
-  const META_KEY_RE = /^(?:[his]:[A-Za-z0-9_-]{1,40}|~build|~pricing)$/;
+  const CATEGORIES_KEY_SYNC = '~categories';
+  const META_KEY_RE = /^(?:[his]:[A-Za-z0-9_-]{1,40}|~build|~pricing|~categories)$/;
   // Long enough for every device to have synced since.
   const FORGET_DELETED_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -1952,6 +2166,7 @@
     c.scenarios.forEach((sc) => out.set(`s:${sc.id}`, sc));
     out.set(BUILD_KEY, c.build);
     out.set(PRICING_KEY_SYNC, pricing);
+    out.set(CATEGORIES_KEY_SYNC, categories);
     return out;
   }
 
@@ -2024,6 +2239,7 @@
     });
     if (build.build && typeof build.build === 'object') remote.set(BUILD_KEY, build.build);
     if (build.pricing && typeof build.pricing === 'object') remote.set(PRICING_KEY_SYNC, cleanPricing(build.pricing));
+    if (Array.isArray(build.categories)) remote.set(CATEGORIES_KEY_SYNC, cleanCategories(build.categories));
 
     const local = localRecords();
     Object.entries(remoteDeleted).forEach(([k, t]) => { if (!(meta.deleted[k] >= t)) meta.deleted[k] = t; });
@@ -2062,6 +2278,7 @@
       render();
     }
     if (kept.has(PRICING_KEY_SYNC)) loadPricing(kept.get(PRICING_KEY_SYNC));
+    if (kept.has(CATEGORIES_KEY_SYNC)) loadCategories(kept.get(CATEGORIES_KEY_SYNC));
     const nextCalc = { build: kept.get(BUILD_KEY) || calc.get().build, scenarios: pick('s:') };
     if (fingerprint(calc.get()) !== fingerprint(nextCalc)) calc.load(nextCalc);
 
@@ -2125,7 +2342,7 @@
         const c = itemCalc(it);
         return { ...it, unitCost: r2(c.unitCost), status: STATUS_LABELS[c.status], profit: r2(c.profit) };
       }),
-      calc: JSON.stringify({ ...calc.get(), pricing, sync: { stamps: meta.stamps, deleted: meta.deleted } }),
+      calc: JSON.stringify({ ...calc.get(), pricing, categories, sync: { stamps: meta.stamps, deleted: meta.deleted } }),
     };
   }
 

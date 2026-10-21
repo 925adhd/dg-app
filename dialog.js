@@ -9,7 +9,8 @@
 //
 // Resolves true only when the confirm button is pressed. appChoose() takes an
 // extra altText button and resolves 'confirm', 'alt', or 'cancel' (Esc, the
-// backdrop, or the cancel button). Text is set with
+// backdrop, or the cancel button). appPrompt() adds a text box and resolves
+// what was typed (trimmed), or null if cancelled. Text is set with
 // textContent, so names typed into the app can never become markup here.
 (() => {
   'use strict';
@@ -25,6 +26,7 @@
       <div class="app-dialog-body">
         <h2 class="app-dialog-title" id="app-dialog-title"></h2>
         <p class="app-dialog-message" id="app-dialog-message"></p>
+        <input type="text" class="app-dialog-input" autocomplete="off" hidden>
         <div class="app-dialog-actions">
           <button type="button" data-choice="cancel" class="app-dialog-cancel"></button>
           <button type="button" data-choice="alt" class="app-dialog-alt"></button>
@@ -41,12 +43,15 @@
     dialog.addEventListener('click', (e) => {
       if (e.target === dialog) dialog.close('cancel');
     });
+    dialog.querySelector('.app-dialog-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); dialog.close('confirm'); }
+    });
     document.body.appendChild(dialog);
   }
 
   let queue = Promise.resolve();
 
-  function show({ title, message = '', confirmText = 'OK', cancelText = 'Cancel', altText = '', danger = false }) {
+  function show({ title, message = '', confirmText = 'OK', cancelText = 'Cancel', altText = '', danger = false, input = null }) {
     if (!dialog) build();
     dialog.querySelector('.app-dialog-title').textContent = title;
     const msg = dialog.querySelector('.app-dialog-message');
@@ -59,12 +64,18 @@
     const confirmBtn = dialog.querySelector('.app-dialog-confirm');
     confirmBtn.textContent = confirmText;
     confirmBtn.classList.toggle('danger', danger);
+    const field = dialog.querySelector('.app-dialog-input');
+    field.hidden = !input;
+    field.value = input ? input.value || '' : '';
+    field.placeholder = input ? input.placeholder || '' : '';
+    field.maxLength = input && input.maxLength ? input.maxLength : 200;
+    field.setAttribute('aria-label', input ? input.label || title : '');
     dialog.returnValue = 'cancel';
     return new Promise((resolve) => {
       dialog.addEventListener('close', () => resolve(dialog.returnValue || 'cancel'), { once: true });
       dialog.showModal();
       // Destructive choices start on the safe button.
-      (danger ? dialog.querySelector('.app-dialog-cancel') : confirmBtn).focus();
+      if (input) { field.focus(); field.select(); } else (danger ? dialog.querySelector('.app-dialog-cancel') : confirmBtn).focus();
     });
   }
 
@@ -75,4 +86,8 @@
     return next;
   };
   window.appConfirm = async (options) => (await window.appChoose(options)) === 'confirm';
+  window.appPrompt = async (options) => {
+    const choice = await window.appChoose({ input: {}, ...options });
+    return choice === 'confirm' ? dialog.querySelector('.app-dialog-input').value.trim() : null;
+  };
 })();

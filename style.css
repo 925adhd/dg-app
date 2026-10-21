@@ -1543,6 +1543,19 @@ select:focus, input:focus {
 .app-dialog-body { padding: 20px 20px 16px; }
 .app-dialog-title { margin: 0 0 8px; font-size: 1.1rem; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .app-dialog-message { margin: 0; font-size: 0.92rem; line-height: 1.5; color: var(--muted); }
+.app-dialog-input {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 10px;
+}
+.app-dialog-input[hidden] { display: none; }
 .app-dialog-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1582,3 +1595,11 @@ select:focus, input:focus {
   .app-dialog-actions { flex-direction: column-reverse; }
   .app-dialog-actions button { width: 100%; }
 }
+
+/* ---------- Categories ---------- */
+.cat-filters { margin: 0 0 12px; flex-wrap: wrap; }
+.cat-name { flex: 1; min-width: 0; align-self: center; font-weight: 600; overflow-wrap: anywhere; }
+.cat-count { font-family: var(--font-tape); font-size: 0.78rem; font-weight: 400; color: var(--muted); margin-left: 6px; }
+.category-panel .scenario-row .ghost-button { width: auto; margin: 0; }
+.inv-cat-row { margin-top: 10px; }
+.inv-cat-row select, .b-item select[data-f="category"] { width: 100%; }

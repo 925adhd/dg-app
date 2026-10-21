@@ -53,7 +53,7 @@ const SHEET_PHOTOS = "Photos";
 // Editable columns — the only ones read back into the app.
 const HAUL_COLUMNS = ["id", "date", "store", "name", "notes"];
 const ITEM_COLUMNS = [
-  "id", "haulId", "name", "upc", "qty", "unitRetail", "totalPaid", "taxPaid", "resalePrice",
+  "id", "haulId", "name", "category", "upc", "qty", "unitRetail", "totalPaid", "taxPaid", "resalePrice",
   "soldQty", "soldTotal", "fees", "soldDate", "platform", "location", "notes", "photo"
 ];
 // Read-only columns the app computes for you.

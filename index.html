@@ -156,7 +156,7 @@
     <section class="bought">
 
       <div class="bought-search-row">
-        <input type="search" id="bought-search" class="bought-search" placeholder="Search items, hauls, barcodes" aria-label="Search purchases" autocomplete="off">
+        <input type="search" id="bought-search" class="bought-search" placeholder="Search items, categories, hauls, barcodes" aria-label="Search purchases" autocomplete="off">
         <button type="button" class="bought-scan" id="bought-scan" aria-label="Scan barcodes to look up or add products" title="Scan barcodes to look up or add products">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>
@@ -178,11 +178,12 @@
           <label class="filter-chip"><input type="radio" name="bought-filter" value="sold"><span>Sold</span></label>
         </div>
         <div class="add-buttons">
-          <button type="button" class="add-haul add-loose" id="export-sheet" title="Save a price list of what's in stock as a PDF to share with customers" hidden>Price list PDF</button>
+          <button type="button" class="add-haul add-loose" id="export-sheet" title="Save a PDF price list of the in-stock items shown, to share with customers" hidden>Price list PDF</button>
           <button type="button" class="add-haul add-loose" id="add-loose" title="Add one item to your inventory without starting a haul">+ Single item</button>
           <button type="button" class="add-haul" id="add-haul" title="Start a new haul and add what you bought">+ New haul</button>
         </div>
       </div>
+      <div class="filter-chips cat-filters" id="cat-filters" role="radiogroup" aria-label="Category" hidden></div>
       <p class="threshold-status" id="inv-message" hidden aria-live="polite"></p>
 
       <div id="haul-list"></div>
@@ -278,6 +279,22 @@
         </div>
         <p class="threshold-status" id="rent-status" hidden></p>
         <button type="button" class="ghost-button pricing-apply" id="pricing-apply">Apply this price to everything in stock</button>
+      </details>
+
+      <details class="sync-panel category-panel">
+        <summary>
+          <span>Categories</span>
+          <span class="sync-status off" id="category-status"></span>
+        </summary>
+        <p class="hint hint-top">Group items like laundry or body wash, so you can pick one in Inventory and make a price list of just that kind.</p>
+        <div class="scenario-save">
+          <label class="field">
+            <span class="field-label">New category</span>
+            <input type="text" id="category-new" placeholder="e.g. Laundry" maxlength="200" autocomplete="off">
+          </label>
+          <button type="button" id="category-add" class="add-button">Add</button>
+        </div>
+        <ul class="scenario-list" id="category-list"></ul>
       </details>
     </section>
   </div>
