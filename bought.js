@@ -739,11 +739,15 @@
           <td class="ps-num">${g.onHand}</td>
         </tr>`;
     }));
+    // The title sits in the table's header so it repeats on every page; the
+    // empty footer row keeps a bottom margin on every page too.
     priceSheet.innerHTML = `
-      <h1>Available items</h1>
-      <p>${esc(formatDate(today()))}</p>
       <table>
-        <thead><tr><th>Photo</th><th>Item</th><th class="ps-num">Retail</th><th class="ps-num">My price</th><th class="ps-num">Qty</th></tr></thead>
+        <thead>
+          <tr><th colspan="5" class="ps-title"><h1>Available items</h1><p>${esc(formatDate(today()))}</p></th></tr>
+          <tr><th>Photo</th><th>Item</th><th class="ps-num">Retail</th><th class="ps-num">My price</th><th class="ps-num">Qty</th></tr>
+        </thead>
+        <tfoot><tr><td colspan="5" class="ps-gap"></td></tr></tfoot>
         <tbody>${rows.join('')}</tbody>
       </table>`;
     // Wait for the photos so none print blank; one that won't load is left out.
