@@ -712,6 +712,62 @@
     if (viewMode() === 'inventory') renderInventory(); else renderHauls();
   });
 
+  // ---------- Customer price list ----------
+  // A plain list of what's in stock — each item's own photo, name, retail,
+  // your price and how many are left — saved through the browser's print
+  // dialog ("Save as PDF"). Costs and profit are never included.
+  const priceSheet = document.createElement('div');
+  priceSheet.className = 'price-sheet';
+  document.body.appendChild(priceSheet);
+  let sheetTitle = '';
+
+  async function exportPriceSheet() {
+    const groups = buildInventory().filter((g) => g.onHand > 0);
+    if (!groups.length) { showInvMessage('Nothing in stock to put on a price list.', 'unmet'); return; }
+    const rows = await Promise.all(groups.map(async (g) => {
+      const lots = g.lots.filter((it) => itemCalc(it).left > 0);
+      const prices = Array.from(new Set(lots.map((it) => round2(it.resalePrice))));
+      const price = prices.length === 1 ? money(prices[0]) : `${money(Math.min(...prices))}–${money(Math.max(...prices))}`;
+      const retail = Math.max(...lots.map((it) => it.unitRetail));
+      const photo = (lots.find((it) => it.photo) || g.lots.find((it) => it.photo) || {}).photo;
+      const src = !photo ? '' : IMAGE_RE.test(photo) ? photo : await photoStore.get(photo);
+      return `<tr>
+          <td class="ps-photo">${src ? `<img alt="" src="${esc(src)}" referrerpolicy="no-referrer">` : ''}</td>
+          <td>${esc(g.name)}</td>
+          <td class="ps-num">${retail ? money(retail) : '—'}</td>
+          <td class="ps-num">${price}</td>
+          <td class="ps-num">${g.onHand}</td>
+        </tr>`;
+    }));
+    priceSheet.innerHTML = `
+      <h1>Available items</h1>
+      <p>${esc(formatDate(today()))}</p>
+      <table>
+        <thead><tr><th>Photo</th><th>Item</th><th class="ps-num">Retail</th><th class="ps-num">My price</th><th class="ps-num">Qty</th></tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>`;
+    // Wait for the photos so none print blank; one that won't load is left out.
+    await Promise.all($$('img', priceSheet).map((img) => (img.complete ? null : new Promise((resolve) => {
+      img.onload = resolve;
+      img.onerror = () => { img.remove(); resolve(); };
+      setTimeout(resolve, 8000);
+    }))));
+    // The PDF is named after the page title.
+    sheetTitle = document.title;
+    document.title = `Price list ${today()}`;
+    document.body.classList.add('printing-sheet');
+    window.print();
+  }
+
+  window.addEventListener('afterprint', () => {
+    if (!document.body.classList.contains('printing-sheet')) return;
+    document.body.classList.remove('printing-sheet');
+    document.title = sheetTitle;
+    priceSheet.innerHTML = '';
+  });
+
+  $('#export-sheet').addEventListener('click', exportPriceSheet);
+
   // ---------- Booth pricing controls ----------
   const pricingPct = $('#pricing-pct');
   const pricingCommission = $('#pricing-commission');
@@ -813,6 +869,7 @@
     // Trips get "+ New trip"; Inventory gets "+ Single item".
     addHaulBtn.hidden = inv;
     $('#add-loose').hidden = !inv;
+    $('#export-sheet').hidden = !inv;
     filterInputs.forEach((r) => { r.checked = r.value === viewFilter[inv ? 'inventory' : 'trips']; });
     haulList.hidden = inv;
     invList.hidden = !inv;

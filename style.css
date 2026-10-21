@@ -1582,3 +1582,20 @@ select:focus, input:focus {
   .app-dialog-actions { flex-direction: column-reverse; }
   .app-dialog-actions button { width: 100%; }
 }
+
+/* Customer price list: only shown when printing it to PDF. */
+.price-sheet { display: none; }
+@media print {
+  body.printing-sheet { background: #FFFFFF; }
+  body.printing-sheet > :not(.price-sheet) { display: none !important; }
+  body.printing-sheet .price-sheet { display: block; color: #000000; font-family: Arial, Helvetica, sans-serif; font-size: 11pt; }
+  .price-sheet h1 { font-size: 16pt; margin: 0 0 2pt; }
+  .price-sheet p { margin: 0 0 10pt; }
+  .price-sheet table { width: 100%; border-collapse: collapse; }
+  .price-sheet th, .price-sheet td { border-bottom: 1px solid #999999; padding: 6pt; text-align: left; vertical-align: middle; }
+  .price-sheet thead { display: table-header-group; }
+  .price-sheet tr { break-inside: avoid; }
+  .price-sheet .ps-num { text-align: right; white-space: nowrap; }
+  .price-sheet .ps-photo { width: 64pt; }
+  .price-sheet .ps-photo img { width: 60pt; height: 60pt; object-fit: contain; display: block; }
+}
