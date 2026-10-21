@@ -163,6 +163,13 @@
     if (!i || typeof i !== 'object' || !(loose || validId(i.haulId))) return null;
     const qty = Math.max(1, Math.round(num(i.qty) || 1));
     const unitRetail = cleanMoney(i.unitRetail);
+    const soldQty = Math.min(qty, Math.max(0, Math.round(num(i.soldQty))));
+    const soldTotal = cleanMoney(i.soldTotal);
+    // Oct 2026: a sheet column change made fees read back as a year (1899,
+    // 1905…). Fees that size can only be that, so a sale's fee goes back to
+    // the booth commission and an unsold item's to $0.
+    let fees = cleanMoney(i.fees);
+    if (fees >= 1000) fees = soldQty ? round2(soldTotal * (pricing.commission / 100)) : 0;
     return {
       id: validId(i.id) ? i.id : newId(),
       haulId: loose ? '' : i.haulId,
@@ -175,9 +182,9 @@
       totalPaid: cleanMoney(i.totalPaid),
       taxPaid: cleanMoney(i.taxPaid),
       resalePrice: i.resalePrice === undefined || i.resalePrice === '' ? boothPrice(unitRetail) : cleanMoney(i.resalePrice),
-      soldQty: Math.min(qty, Math.max(0, Math.round(num(i.soldQty)))),
-      soldTotal: cleanMoney(i.soldTotal),
-      fees: cleanMoney(i.fees),
+      soldQty,
+      soldTotal,
+      fees,
       soldDate: DATE_RE.test(i.soldDate) ? i.soldDate : '',
       platform: cleanText(i.platform),
       location: cleanText(i.location),
@@ -2429,10 +2436,18 @@
   });
 
   async function copyScript(done) {
-    try {
-      const res = await fetch('google-sheet-sync/Code.gs', { cache: 'no-store' });
+    const script = fetch('google-sheet-sync/Code.gs', { cache: 'no-store' }).then((res) => {
       if (!res.ok) throw new Error();
-      await navigator.clipboard.writeText(await res.text());
+      return res.text();
+    });
+    try {
+      // Safari (iPad, iPhone) only lets the tap copy if the copy starts right
+      // away, so it's handed the script while it's still downloading.
+      if (window.ClipboardItem && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': script.then((t) => new Blob([t], { type: 'text/plain' })) })]);
+      } else {
+        await navigator.clipboard.writeText(await script);
+      }
       showMessage(done, 'met');
     } catch (e) {
       showMessage('Couldn’t copy automatically — use the “open it here” link instead.', 'unmet');

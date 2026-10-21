@@ -195,8 +195,15 @@ function doPost(e) {
 function readSheet(ss, name, columns) {
   const sheet = ss.getSheetByName(name);
   if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow < 2 || lastColumn < 1) return [];
+  // A number in a cell formatted as a date reads back as a date (a $0 fee
+  // became "1899-12-30"), so number columns lose any formatting first.
+  sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(String).forEach(function (header, i) {
+    if (NUMERIC_COLUMNS.indexOf(header) !== -1) sheet.getRange(2, i + 1, lastRow - 1, 1).clearFormat();
+  });
   const values = sheet.getDataRange().getValues();
-  if (values.length < 2) return [];
   const timeZone = ss.getSpreadsheetTimeZone();
   const headers = values[0].map(String);
   return values
@@ -243,7 +250,9 @@ function cellValue(value, column) {
 function writeSheet(ss, name, rows, columns) {
   let sheet = ss.getSheetByName(name);
   if (!sheet) sheet = ss.insertSheet(name);
-  sheet.clearContents();
+  // Formatting is cleared too, so a column's old format (say, a date) can't
+  // stick to whatever column lands there when the layout changes.
+  sheet.clear();
   sheet.getRange(1, 1, 1, columns.length).setValues([columns]).setFontWeight("bold");
   sheet.setFrozenRows(1);
   if (rows.length === 0) return;
