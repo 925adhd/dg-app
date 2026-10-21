@@ -713,62 +713,141 @@
   });
 
   // ---------- Customer price list ----------
-  // A plain list of what's in stock — each item's own photo, name, retail,
-  // your price and how many are left — saved through the browser's print
-  // dialog ("Save as PDF"). Costs and profit are never included.
-  const priceSheet = document.createElement('div');
-  priceSheet.className = 'price-sheet';
-  document.body.appendChild(priceSheet);
-  let sheetTitle = '';
+  // A plain PDF of what's in stock — each item's own photo, name, retail,
+  // your price and how many are left — with the heading on every page.
+  // It's built here rather than printed, since tablets add the web address
+  // to printouts. Costs and profit are never included.
+  let pdfLoading = null;
+  function loadPdfMaker() {
+    if (window.jspdf) return Promise.resolve();
+    if (!pdfLoading) {
+      pdfLoading = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'vendor/jspdf.umd.min.js';
+        s.onload = resolve;
+        s.onerror = () => { pdfLoading = null; reject(new Error('The PDF maker didn’t load — check your connection and try again.')); };
+        document.head.appendChild(s);
+      });
+    }
+    return pdfLoading;
+  }
+
+  // Turns a photo (yours or a product database's) into a small JPEG the PDF
+  // can hold. Resolves null if it won't load.
+  function photoForPdf(src) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.referrerPolicy = 'no-referrer';
+      const timer = setTimeout(() => resolve(null), 8000);
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const scale = Math.min(1, 240 / Math.max(img.naturalWidth, img.naturalHeight));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve({ data: canvas.toDataURL('image/jpeg', 0.8), w: canvas.width, h: canvas.height });
+        } catch (e) {
+          resolve(null);
+        }
+      };
+      img.onerror = () => { clearTimeout(timer); resolve(null); };
+      img.src = src;
+    });
+  }
 
   async function exportPriceSheet() {
     const groups = buildInventory().filter((g) => g.onHand > 0);
     if (!groups.length) { showInvMessage('Nothing in stock to put on a price list.', 'unmet'); return; }
-    const rows = await Promise.all(groups.map(async (g) => {
-      const lots = g.lots.filter((it) => itemCalc(it).left > 0);
-      const prices = Array.from(new Set(lots.map((it) => round2(it.resalePrice))));
-      const price = prices.length === 1 ? money(prices[0]) : `${money(Math.min(...prices))}–${money(Math.max(...prices))}`;
-      const retail = Math.max(...lots.map((it) => it.unitRetail));
-      const photo = (lots.find((it) => it.photo) || g.lots.find((it) => it.photo) || {}).photo;
-      const src = !photo ? '' : IMAGE_RE.test(photo) ? photo : await photoStore.get(photo);
-      return `<tr>
-          <td class="ps-photo">${src ? `<img alt="" src="${esc(src)}" referrerpolicy="no-referrer">` : ''}</td>
-          <td>${esc(g.name)}</td>
-          <td class="ps-num">${retail ? money(retail) : '—'}</td>
-          <td class="ps-num">${price}</td>
-          <td class="ps-num">${g.onHand}</td>
-        </tr>`;
-    }));
-    // The title sits in the table's header so it repeats on every page; the
-    // empty footer row keeps a bottom margin on every page too.
-    priceSheet.innerHTML = `
-      <table>
-        <thead>
-          <tr><th colspan="5" class="ps-title"><h1>Available items</h1><p>${esc(formatDate(today()))}</p></th></tr>
-          <tr><th>Photo</th><th>Item</th><th class="ps-num">Retail</th><th class="ps-num">My price</th><th class="ps-num">Qty</th></tr>
-        </thead>
-        <tfoot><tr><td colspan="5" class="ps-gap"></td></tr></tfoot>
-        <tbody>${rows.join('')}</tbody>
-      </table>`;
-    // Wait for the photos so none print blank; one that won't load is left out.
-    await Promise.all($$('img', priceSheet).map((img) => (img.complete ? null : new Promise((resolve) => {
-      img.onload = resolve;
-      img.onerror = () => { img.remove(); resolve(); };
-      setTimeout(resolve, 8000);
-    }))));
-    // The PDF is named after the page title.
-    sheetTitle = document.title;
-    document.title = `Price list ${today()}`;
-    document.body.classList.add('printing-sheet');
-    window.print();
-  }
+    const btn = $('#export-sheet');
+    btn.disabled = true;
+    showInvMessage('Making your price list…', '');
+    try {
+      await loadPdfMaker();
+      const rows = await Promise.all(groups.map(async (g) => {
+        const lots = g.lots.filter((it) => itemCalc(it).left > 0);
+        const prices = Array.from(new Set(lots.map((it) => round2(it.resalePrice))));
+        const retail = Math.max(...lots.map((it) => it.unitRetail));
+        const photo = (lots.find((it) => it.photo) || g.lots.find((it) => it.photo) || {}).photo;
+        const src = !photo ? null : IMAGE_RE.test(photo) ? photo : await photoStore.get(photo);
+        return {
+          name: g.name,
+          retail: retail ? money(retail) : '-',
+          price: prices.length === 1 ? money(prices[0]) : `${money(Math.min(...prices))} - ${money(Math.max(...prices))}`,
+          qty: String(g.onHand),
+          img: src ? await photoForPdf(src) : null,
+        };
+      }));
 
-  window.addEventListener('afterprint', () => {
-    if (!document.body.classList.contains('printing-sheet')) return;
-    document.body.classList.remove('printing-sheet');
-    document.title = sheetTitle;
-    priceSheet.innerHTML = '';
-  });
+      const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const M = 36;
+      const PHOTO = 60;
+      const ROW_PAD = 6;
+      // Right edges of the number columns, and where the name starts.
+      const colQty = pageW - M;
+      const colPrice = colQty - 50;
+      const colRetail = colPrice - 80;
+      const colName = M + PHOTO + 12;
+      const nameWidth = colRetail - 80 - colName;
+      const dateText = formatDate(today());
+
+      const header = () => {
+        let y = M;
+        doc.setFont('helvetica', 'bold').setFontSize(18).text('Available items', M, y + 14);
+        doc.setFont('helvetica', 'normal').setFontSize(10).text(dateText, M, y + 30);
+        y += 50;
+        doc.setFont('helvetica', 'bold').setFontSize(10);
+        doc.text('Photo', M, y);
+        doc.text('Item', colName, y);
+        doc.text('Retail', colRetail, y, { align: 'right' });
+        doc.text('My price', colPrice, y, { align: 'right' });
+        doc.text('Qty', colQty, y, { align: 'right' });
+        y += 6;
+        doc.setDrawColor(0).setLineWidth(1).line(M, y, pageW - M, y);
+        return y;
+      };
+
+      let y = header();
+      doc.setDrawColor(160).setLineWidth(0.5);
+      rows.forEach((r) => {
+        doc.setFont('helvetica', 'normal').setFontSize(11);
+        const lines = doc.splitTextToSize(r.name, nameWidth).slice(0, 4);
+        const rowH = Math.max(PHOTO, lines.length * 14) + ROW_PAD * 2;
+        if (y + rowH > pageH - M) {
+          doc.addPage();
+          y = header();
+          doc.setFont('helvetica', 'normal').setFontSize(11);
+        }
+        const top = y + ROW_PAD;
+        const mid = y + rowH / 2;
+        if (r.img) {
+          const s = PHOTO / Math.max(r.img.w, r.img.h);
+          const w = r.img.w * s, h = r.img.h * s;
+          doc.addImage(r.img.data, 'JPEG', M + (PHOTO - w) / 2, top + (PHOTO - h) / 2, w, h);
+        }
+        doc.text(lines, colName, mid - ((lines.length - 1) * 14) / 2 + 4);
+        doc.text(r.retail, colRetail, mid + 4, { align: 'right' });
+        doc.text(r.price, colPrice, mid + 4, { align: 'right' });
+        doc.text(r.qty, colQty, mid + 4, { align: 'right' });
+        y += rowH;
+        doc.setDrawColor(160).setLineWidth(0.5).line(M, y, pageW - M, y);
+      });
+
+      doc.save(`Price list ${today()}.pdf`);
+      showInvMessage('Price list saved.', 'met');
+    } catch (err) {
+      showInvMessage(err.message || 'Couldn’t make the price list.', 'unmet');
+    } finally {
+      btn.disabled = false;
+    }
+  }
 
   $('#export-sheet').addEventListener('click', exportPriceSheet);
 
