@@ -324,6 +324,7 @@
   // ---------- Spend & save deals ----------
   // Cart-level offers like "Save $5 when you spend $25 on select items".
   // Each deal covers a chosen set of items and splits its savings across them.
+  const SPEND_MODES = ['spend', 'qty', 'free'];
   const SPEND_KINDS = {
     sale: 'Instant Savings / store offer',
     dg: 'DG coupon',
@@ -340,9 +341,13 @@
     row.dataset.selected = JSON.stringify(Array.isArray(data.items) ? data.items : []);
     const kind = SPEND_KINDS[data.kind] ? data.kind : 'dg';
     const split = data.split === 'even' ? 'even' : 'price';
-    const mode = data.mode === 'qty' ? 'qty' : 'spend';
-    const repeat = data.repeat !== undefined ? data.repeat !== false : mode === 'spend';
+    const mode = SPEND_MODES.includes(data.mode) ? data.mode : 'spend';
+    const reward = data.reward === 'other' ? 'other' : 'same';
+    const repeat = data.repeat !== undefined ? data.repeat !== false : mode !== 'qty';
     row.dataset.mode = mode;
+    row.dataset.reward = reward;
+    row.dataset.rewardSelected = JSON.stringify(Array.isArray(data.rewardItems) ? data.rewardItems : []);
+    const free = mode === 'free';
     row.innerHTML = `
       <div class="item-row-top">
         <input type="text" class="spend-name" placeholder="Deal name" value="${escapeAttr(data.name || '')}">
@@ -354,25 +359,37 @@
           <select class="s-mode">
             <option value="spend" ${mode === 'spend' ? 'selected' : ''}>Spend $X, save $</option>
             <option value="qty" ${mode === 'qty' ? 'selected' : ''}>Buy any X items, save $</option>
+            <option value="free" ${free ? 'selected' : ''}>Buy any X items, get Y free</option>
           </select>
         </label>
-        <label class="field field-narrow">
+        <label class="field field-narrow s-amount-field" ${free ? 'hidden' : ''}>
           <span class="field-label">Save</span>
           <div class="unit-input"><span class="unit">$</span><input type="number" class="s-amount" min="0" step="0.01" placeholder="5.00" value="${data.amount ?? ''}"></div>
         </label>
-        <label class="field field-narrow s-threshold-field" ${mode === 'qty' ? 'hidden' : ''}>
+        <label class="field field-narrow s-threshold-field" ${mode !== 'spend' ? 'hidden' : ''}>
           <span class="field-label">When you spend</span>
           <div class="unit-input"><span class="unit">$</span><input type="number" class="s-threshold" min="0" step="0.01" placeholder="25.00" value="${data.threshold ?? ''}"></div>
         </label>
-        <label class="field field-narrow s-count-field" ${mode === 'qty' ? '' : 'hidden'}>
-          <span class="field-label">When you buy any</span>
+        <label class="field field-narrow s-count-field" ${mode === 'spend' ? 'hidden' : ''}>
+          <span class="field-label s-count-label">${free ? 'Buy any' : 'When you buy any'}</span>
           <div class="unit-input"><input type="number" class="s-count" min="1" step="1" inputmode="numeric" placeholder="2" value="${data.count ?? ''}"><span class="unit">items</span></div>
+        </label>
+        <label class="field field-narrow s-get-field" ${free ? '' : 'hidden'}>
+          <span class="field-label">Get</span>
+          <div class="unit-input"><input type="number" class="s-get" min="1" step="1" inputmode="numeric" placeholder="1" value="${data.getCount ?? ''}"><span class="unit">free</span></div>
+        </label>
+        <label class="field field-narrow s-reward-field" ${free ? '' : 'hidden'}>
+          <span class="field-label">Free item is</span>
+          <select class="s-reward">
+            <option value="same" ${reward === 'same' ? 'selected' : ''}>The cheapest of these items</option>
+            <option value="other" ${reward === 'other' ? 'selected' : ''}>A different item</option>
+          </select>
         </label>
         <label class="field field-narrow">
           <span class="field-label">Counts as</span>
           <select class="s-kind">${Object.entries(SPEND_KINDS).map(([v, l]) => `<option value="${v}" ${v === kind ? 'selected' : ''}>${l}</option>`).join('')}</select>
         </label>
-        <label class="field field-narrow">
+        <label class="field field-narrow s-split-field" ${free ? 'hidden' : ''}>
           <span class="field-label">Split savings</span>
           <select class="s-split">
             <option value="price" ${split === 'price' ? 'selected' : ''}>By price</option>
@@ -384,8 +401,12 @@
         <input type="checkbox" class="s-repeat" ${repeat ? 'checked' : ''}>
         <span class="s-repeat-text">${repeatText(mode)}</span>
       </label>
-      <span class="field-label spend-items-label">Items that count toward it</span>
+      <span class="field-label spend-items-label">${itemsLabel(mode, reward)}</span>
       <div class="chip-grid s-items"></div>
+      <div class="s-reward-block" ${free && reward === 'other' ? '' : 'hidden'}>
+        <span class="field-label spend-items-label">Free item</span>
+        <div class="chip-grid s-reward-items"></div>
+      </div>
       <p class="threshold-status spend-status" hidden></p>
     `;
     row.querySelector('.remove-spend').addEventListener('click', () => {
@@ -397,22 +418,49 @@
   }
 
   function repeatText(mode) {
+    if (mode === 'free') return 'Repeats for each full set (buy 4, get 2 free) — leave off if it’s limit one';
     return mode === 'qty'
       ? 'Repeats for each full set (buy 2× the items, save 2×) — leave off for a one-time coupon'
       : 'Repeats as you spend more (spend 2× as much, save 2× as much)';
   }
 
-  // Switching deal type swaps the "spend $" box for the "buy any X items" box.
-  // Item-count coupons are usually one per transaction, so repeat starts off.
-  spendList.addEventListener('change', (e) => {
-    if (!e.target.classList.contains('s-mode')) return;
-    const row = e.target.closest('.spend-row');
-    const mode = e.target.value;
+  function itemsLabel(mode, reward) {
+    if (mode !== 'free') return 'Items that count toward it';
+    return reward === 'other' ? 'Items you buy' : 'Items in the deal (mix and match)';
+  }
+
+  function syncSpendModeUI(row) {
+    const mode = $('.s-mode', row).value;
+    const reward = $('.s-reward', row).value;
+    const free = mode === 'free';
     row.dataset.mode = mode;
-    $('.s-threshold-field', row).hidden = mode === 'qty';
-    $('.s-count-field', row).hidden = mode !== 'qty';
-    $('.s-repeat', row).checked = mode !== 'qty';
+    row.dataset.reward = reward;
+    $('.s-amount-field', row).hidden = free;
+    $('.s-threshold-field', row).hidden = mode !== 'spend';
+    $('.s-count-field', row).hidden = mode === 'spend';
+    $('.s-count-label', row).textContent = free ? 'Buy any' : 'When you buy any';
+    $('.s-get-field', row).hidden = !free;
+    $('.s-reward-field', row).hidden = !free;
+    $('.s-split-field', row).hidden = free;
+    $('.s-reward-block', row).hidden = !(free && reward === 'other');
+    $('.spend-items-label', row).textContent = itemsLabel(mode, reward);
     $('.s-repeat-text', row).textContent = repeatText(mode);
+  }
+
+  // Switching deal type swaps in that type's boxes. Item-count coupons are
+  // usually one per transaction, so repeat starts off; get-free offers are
+  // usually store offers that repeat.
+  spendList.addEventListener('change', (e) => {
+    const row = e.target.closest('.spend-row');
+    if (!row) return;
+    if (e.target.classList.contains('s-mode')) {
+      const mode = e.target.value;
+      $('.s-repeat', row).checked = mode !== 'qty';
+      if (mode === 'free') $('.s-kind', row).value = 'sale';
+      syncSpendModeUI(row);
+    } else if (e.target.classList.contains('s-reward')) {
+      syncSpendModeUI(row);
+    }
   });
 
   // Which items each spend & save deal is linked to from the items' own
@@ -438,12 +486,15 @@
     const links = groupLinks();
     const signature = itemRows.map((r, i) => r.dataset.uid + ':' + ($('.item-name', r).value.trim() || `Item ${i + 1}`) + (r.classList.contains('is-hidden') ? ':hidden' : '')).join('|');
     $$('.spend-row', spendList).forEach((row) => {
-      const container = $('.s-items', row);
-      const linked = links.get(row.dataset.uid) || new Set();
+      fillChips($('.s-items', row), row.dataset.selected, links.get(row.dataset.uid) || new Set());
+      fillChips($('.s-reward-items', row), row.dataset.rewardSelected, new Set());
+    });
+
+    function fillChips(container, savedSelected, linked) {
       const sig = signature + '#' + Array.from(linked).join(',');
       if (container.dataset.sig === sig) return;
       const selected = new Set(container.dataset.sig === undefined
-        ? JSON.parse(row.dataset.selected || '[]')
+        ? JSON.parse(savedSelected || '[]')
         : $$('input:checked:not(:disabled)', container).map((c) => c.value));
       container.dataset.sig = sig;
       container.innerHTML = itemRows.length
@@ -456,7 +507,7 @@
             return `<label class="check-chip${hidden ? ' chip-hidden' : ''}${isLinked ? ' chip-linked' : ''}"${title ? ` title="${title}"` : ''}><input type="checkbox" value="${uid}" ${selected.has(uid) || isLinked ? 'checked' : ''} ${isLinked ? 'disabled' : ''}><span>${escapeHtml(name)}</span></label>`;
           }).join('')
         : '<span class="hint">Add items below first.</span>';
-    });
+    }
   }
 
   // Fills each item's "Any X items (mixed)" picker with the matching deals
@@ -522,15 +573,19 @@
       threshold: num($('.s-threshold', row).value),
       mode: $('.s-mode', row).value,
       count: Math.max(0, Math.round(num($('.s-count', row).value))),
+      getCount: Math.max(0, Math.round(num($('.s-get', row).value))),
+      reward: $('.s-reward', row).value,
       kind: $('.s-kind', row).value,
       split: $('.s-split', row).value,
       repeat: $('.s-repeat', row).checked,
       itemUids: $$('.s-items input:checked', row).map((c) => c.value),
+      rewardUids: $$('.s-reward-items input:checked', row).map((c) => c.value),
     }));
   }
 
   function spendLabel(d) {
-    const offer = (d.mode === 'qty' ? `Save $${d.amount.toFixed(2)} on any ${d.count}` : `Save $${d.amount.toFixed(2)} on $${d.threshold.toFixed(2)}`)
+    const offer = (d.mode === 'free' ? `Buy ${d.count} Get ${d.getCount} Free`
+      : d.mode === 'qty' ? `Save $${d.amount.toFixed(2)} on any ${d.count}` : `Save $${d.amount.toFixed(2)} on $${d.threshold.toFixed(2)}`)
       + (d.times > 1 ? ` (×${d.times})` : '');
     return (d.name ? `${d.name}: ${offer}` : offer) + (SLOT_SUFFIX[d.kind] ?? '');
   }
@@ -540,6 +595,19 @@
   // never pushing an item below $0. `field` is the running price to reduce.
   function applySpendDeals(deals, kind, items, field) {
     deals.filter((d) => d.kind === kind && d.qualifies).forEach((d) => {
+      // Get-free deals already know which items' units come free.
+      if (d.mode === 'free') {
+        let given = 0;
+        items.forEach((i) => {
+          const amount = round2(Math.min(d.freeAllocs.get(i.uid) || 0, i[field]));
+          if (amount <= 0) return;
+          i[field] = Math.max(0, round2(i[field] - amount));
+          i.spendLines.push({ kind, label: spendLabel(d), amount });
+          given = round2(given + amount);
+        });
+        d.capped = given < d.earned;
+        return;
+      }
       const members = items.filter((i) => d.itemUids.includes(i.uid) && i[field] > 0);
       const pool = members.reduce((s, i) => s + i[field], 0);
       if (pool <= 0) return;
@@ -827,6 +895,37 @@
     return base + times + suffix;
   }
 
+  // "Buy any X, get Y free" across mixed items. Every unit is valued at its
+  // price after sale prices and store offer deals. When the free item comes
+  // from the same mix, the cheapest units are the free ones (the register
+  // never gives away the pricier item). When it's a different item, each
+  // full set of X bought items unlocks Y of the ticked free item(s).
+  function qualifyFreeDeal(d, shelfItems) {
+    const other = d.reward === 'other';
+    const buyers = shelfItems.filter((i) => d.itemUids.includes(i.uid) && !(other && d.rewardUids.includes(i.uid)));
+    const rewards = other ? shelfItems.filter((i) => d.rewardUids.includes(i.uid)) : buyers;
+    const unitsOf = (list) => list.flatMap((i) => Array.from({ length: i.qty }, () => ({ uid: i.uid, price: i.qty ? i.shelf / i.qty : 0 })));
+    d.memberCount = buyers.length;
+    d.units = buyers.reduce((s, i) => s + i.qty, 0);
+    d.rewardUnits = rewards.reduce((s, i) => s + i.qty, 0);
+    d.rewardCount = rewards.length;
+    d.freeAllocs = new Map();
+    d.capped = false;
+    const setSize = other ? d.count : d.count + d.getCount;
+    const valid = d.count > 0 && d.getCount > 0 && buyers.length > 0 && (!other || rewards.length > 0);
+    const fullSets = valid ? Math.floor(d.units / setSize) : 0;
+    let sets = d.repeat ? fullSets : Math.min(1, fullSets);
+    // A different free item only pays out for as many as you're getting.
+    if (other && valid) sets = Math.min(sets, Math.ceil(d.rewardUnits / d.getCount));
+    d.times = sets;
+    d.qualifies = sets > 0;
+    d.freeUnits = Math.min(sets * d.getCount, other ? d.rewardUnits : Infinity);
+    unitsOf(rewards).sort((a, b) => a.price - b.price).slice(0, d.freeUnits).forEach((u) => {
+      d.freeAllocs.set(u.uid, round2((d.freeAllocs.get(u.uid) || 0) + u.price));
+    });
+    d.earned = round2(Array.from(d.freeAllocs.values()).reduce((s, v) => s + v, 0));
+  }
+
   function calculate() {
     const basket = getBasketConfig();
     const rawItems = readItems().filter((it) => !it.hidden);
@@ -858,6 +957,7 @@
     // Spend & save thresholds are checked against the chosen items' price
     // after sale prices and store offer deals — before any coupons.
     spendDeals.forEach((d) => {
+      if (d.mode === 'free') { qualifyFreeDeal(d, shelfItems); return; }
       const members = shelfItems.filter((i) => d.itemUids.includes(i.uid));
       d.memberCount = members.length;
       d.spend = round2(members.reduce((s, i) => s + i.shelf, 0));
@@ -1012,6 +1112,7 @@
     result.spendDeals.forEach((d) => {
       const el = $('.spend-status', d.el);
       el.hidden = false;
+      if (d.mode === 'free') { renderFreeStatus(d, el); return; }
       const qty = d.mode === 'qty';
       const plural = (n) => `${n} item${n === 1 ? '' : 's'}`;
       const more = (n) => `${n} more item${n === 1 ? '' : 's'}`;
@@ -1036,6 +1137,36 @@
         el.className = 'threshold-status spend-status unmet';
       }
     });
+  }
+
+  function renderFreeStatus(d, el) {
+    const other = d.reward === 'other';
+    const items = (n) => `${n} item${n === 1 ? '' : 's'}`;
+    const moreItems = (n) => `${n} more item${n === 1 ? '' : 's'}`;
+    const setSize = other ? d.count : d.count + d.getCount;
+    let text;
+    let met = false;
+    if (d.count <= 0 || d.getCount <= 0) {
+      text = 'Enter how many you buy and how many you get free.';
+    } else if (!d.memberCount) {
+      text = other ? 'Tick the items you buy for this deal.' : 'Tick the items in this deal.';
+    } else if (other && !d.rewardCount) {
+      text = 'Tick the free item below.';
+    } else if (d.qualifies) {
+      met = true;
+      const next = !d.repeat ? ''
+        : other && d.units >= d.count * (d.times + 1) ? ` Add ${d.getCount} more of the free item to get ${d.getCount === 1 ? 'it' : 'them'} free too.`
+        : ` Add ${moreItems(setSize * (d.times + 1) - d.units)} to get ${d.getCount} more free.`;
+      text = `Qualified — ${items(d.freeUnits)} free, ${money(d.earned)} off${d.times > 1 ? ` (×${d.times})` : ''}.` + (d.capped ? ' (Capped at what the items cost.)' : '') + next;
+    } else if (other && d.units >= d.count) {
+      text = `${items(d.units)} bought — add the free item to your list to get it free.`;
+    } else if (other) {
+      text = `${d.units} of ${d.count} items — add ${moreItems(d.count - d.units)} to get the free item.`;
+    } else {
+      text = `${d.units} of ${setSize} items — add ${moreItems(setSize - d.units)} to get ${d.getCount} free. The free one${d.getCount === 1 ? '' : 's'} must be on your list too.`;
+    }
+    el.textContent = text;
+    el.className = `threshold-status spend-status ${met ? 'met' : 'unmet'}`;
   }
 
   function renderReceipt(result) {
@@ -1152,9 +1283,11 @@
         uid: d.el.dataset.uid,
         name: d.name, amount: $('.s-amount', d.el).value, threshold: $('.s-threshold', d.el).value,
         mode: d.mode, count: $('.s-count', d.el).value,
+        getCount: $('.s-get', d.el).value, reward: d.reward,
         kind: d.kind, split: d.split, repeat: d.repeat,
         // Only hand-ticked items — linked ones are restored from the item's own deal.
         items: $$('.s-items input:checked:not(:disabled)', d.el).map((c) => c.value),
+        rewardItems: d.rewardUids,
       })),
       items: readItems().map((it) => ({
         uid: it.uid, name: it.name, qty: it.qty, retail: $('.f-retail', it.el).value, sale: $('.f-sale', it.el).value,
@@ -1225,11 +1358,13 @@
       spendDeals: rows(s.spendDeals).map((d) => ({
         uid: uniqueUid(d.uid), name: cleanName(d.name),
         amount: cleanNumText(d.amount), threshold: cleanNumText(d.threshold),
-        mode: d.mode === 'qty' ? 'qty' : 'spend', count: cleanNumText(d.count),
+        mode: SPEND_MODES.includes(d.mode) ? d.mode : 'spend', count: cleanNumText(d.count),
+        getCount: cleanNumText(d.getCount), reward: d.reward === 'other' ? 'other' : 'same',
         kind: hasKey(SPEND_KINDS, d.kind) ? d.kind : 'dg',
         split: d.split === 'even' ? 'even' : 'price',
         repeat: typeof d.repeat === 'boolean' ? d.repeat : undefined,
         items: (Array.isArray(d.items) ? d.items.slice(0, MAX_SAVED_ROWS) : []).map(cleanUid).filter(Boolean),
+        rewardItems: (Array.isArray(d.rewardItems) ? d.rewardItems.slice(0, MAX_SAVED_ROWS) : []).map(cleanUid).filter(Boolean),
       })),
     };
   }

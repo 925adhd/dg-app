@@ -464,6 +464,7 @@ select:focus, input:focus {
   margin-bottom: 12px;
 }
 .spend-items-label { display: block; margin-bottom: 8px; }
+.s-reward-block { margin-top: 14px; }
 
 .chip-grid {
   display: flex;
