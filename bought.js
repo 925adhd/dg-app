@@ -719,6 +719,7 @@
       // Renaming to a product you already have puts the two together.
       const joins = invGroups.find((o) => o !== g && o.key === productKey(name));
       g.lots.forEach((it) => { it.name = name; });
+      renameInBundles(g.key, joins ? joins.name : name);
       save();
       render();
       showInvMessage(joins ? `Renamed and combined with ${joins.name}.` : `Renamed to ${name}.`, 'met');
@@ -915,7 +916,8 @@
   }
 
   searchInput.addEventListener('input', () => {
-    if (viewMode() === 'inventory') renderInventory(); else renderHauls();
+    const mode = viewMode();
+    if (mode === 'inventory') renderInventory(); else if (mode === 'bundles') renderBundles(); else renderHauls();
   });
 
   // ---------- Customer price list ----------
@@ -1062,6 +1064,364 @@
 
   $('#export-sheet').addEventListener('click', exportPriceSheet);
 
+  // ---------- Bundles ----------
+  // Products put together to sell as one, at one price. A bundle names its
+  // products (matched like Inventory, by name) and how many of each; retail,
+  // cost and stock come from Inventory, so they stay current. The bundle PDF
+  // shows what's in it and only the bundle's total retail vs your price.
+  const BUNDLE_KEY = 'therealtotal:bundles';
+  const MAX_BUNDLES = 500;
+  const MAX_BUNDLE_ITEMS = 100;
+  const bundleList = $('#bundle-list');
+
+  function cleanBundle(b) {
+    if (!b || typeof b !== 'object') return null;
+    const seen = new Set();
+    return {
+      id: validId(b.id) ? b.id : newId(),
+      name: cleanText(b.name),
+      price: cleanMoney(b.price),
+      items: (Array.isArray(b.items) ? b.items.slice(0, MAX_BUNDLE_ITEMS) : [])
+        .map((x) => (x && typeof x === 'object'
+          ? { name: cleanText(x.name).trim(), qty: Math.min(999, Math.max(1, Math.round(num(x.qty) || 1))) }
+          : null))
+        .filter((x) => x && x.name && !seen.has(productKey(x.name)) && seen.add(productKey(x.name))),
+    };
+  }
+
+  function cleanBundles(list) {
+    const seen = new Set();
+    return (Array.isArray(list) ? list.slice(0, MAX_BUNDLES) : [])
+      .map(cleanBundle)
+      .filter((b) => b && !seen.has(b.id) && seen.add(b.id));
+  }
+
+  let bundles = [];
+  try { bundles = cleanBundles(JSON.parse(localStorage.getItem(BUNDLE_KEY))); } catch (e) { /* storage unavailable */ }
+
+  function saveBundles() {
+    try { localStorage.setItem(BUNDLE_KEY, JSON.stringify(bundles)); } catch (e) { /* storage unavailable */ }
+    noteLocalChanges();
+    scheduleSync();
+  }
+
+  // Bundles that came from the Google Sheet.
+  function loadBundles(list) {
+    const next = cleanBundles(list);
+    if (fingerprint(next) === fingerprint(bundles)) return;
+    bundles = next;
+    try { localStorage.setItem(BUNDLE_KEY, JSON.stringify(bundles)); } catch (e) { /* storage unavailable */ }
+    if (viewMode() === 'bundles') renderBundles();
+  }
+
+  // Keeps bundles pointing at a product after it's renamed in Inventory.
+  // Renaming onto a product a bundle already has adds the two together.
+  function renameInBundles(oldKey, newName) {
+    let changed = false;
+    bundles.forEach((b) => {
+      const it = b.items.find((x) => productKey(x.name) === oldKey);
+      if (!it) return;
+      const other = b.items.find((x) => x !== it && productKey(x.name) === productKey(newName));
+      if (other) {
+        other.qty = Math.min(999, other.qty + it.qty);
+        b.items = b.items.filter((x) => x !== it);
+      } else {
+        it.name = newName;
+      }
+      changed = true;
+    });
+    if (changed) saveBundles();
+  }
+
+  // What one unit of a product is worth, costs and sells for, from the
+  // stock you have (or, if it's sold out, from every purchase of it).
+  function productFacts(g) {
+    if (!g) return null;
+    const inStock = g.lots.filter((it) => itemCalc(it).left > 0);
+    const lots = inStock.length ? inStock : g.lots;
+    const last = lots[lots.length - 1];
+    return {
+      name: g.name,
+      onHand: g.onHand,
+      retail: Math.max(0, ...lots.map((it) => it.unitRetail)),
+      // The oldest stock sells first, so its price is the one that counts.
+      resale: lots[0].resalePrice,
+      cost: g.onHand ? g.cost / g.onHand : itemCalc(last).unitCost,
+      photo: (lots.find((it) => it.photo) || g.lots.find((it) => it.photo) || {}).photo || '',
+    };
+  }
+
+  function bundleTotals(b, groups) {
+    const t = { retail: 0, separately: 0, cost: 0, units: 0, missing: 0 };
+    b.items.forEach((x) => {
+      const f = productFacts(groups.get(productKey(x.name)));
+      t.units += x.qty;
+      if (!f) { t.missing += 1; return; }
+      t.retail += f.retail * x.qty;
+      t.separately += f.resale * x.qty;
+      t.cost += f.cost * x.qty;
+    });
+    // No price typed yet means the products' own prices added up.
+    t.price = b.price || round2(t.separately);
+    return t;
+  }
+
+  function bundleFootHTML(b, groups) {
+    if (!b.items.length) return '<span class="muted">Add products to see the bundle’s retail value.</span>';
+    const t = bundleTotals(b, groups);
+    const profit = afterCommission(t.price) - t.cost;
+    const off = pct(t.retail - t.price, t.retail);
+    return `<span>${t.units} item${t.units === 1 ? '' : 's'}</span>`
+      + `<span>Retail ${money(t.retail)}</span>`
+      + `<span>Sold separately ${money(t.separately)}</span>`
+      + `<span>Cost ${money(t.cost)}</span>`
+      + (t.price ? `<span class="${profit < 0 ? 'bad' : 'good'}">Profit ${signedMoney(profit)}${marginText(profit, t.price)}</span>` : '')
+      + (off > 0 ? `<span class="muted">${off}% off retail</span>` : '')
+      + (t.price && profit < 0 ? `<span class="below-cost">Below cost — price at ${money(minPrice(t.cost))}+ to break even</span>` : '');
+  }
+
+  // A plain picture box (not a button), filled by showPhotos() for photos you took.
+  function bundlePhotoHTML(photo) {
+    if (!photo) return '<span class="b-photo bundle-photo bundle-photo-empty" aria-hidden="true"></span>';
+    const img = IMAGE_RE.test(photo)
+      ? `<img alt="" src="${esc(photo)}" referrerpolicy="no-referrer">`
+      : `<img alt="" data-photo-id="${esc(photo)}">`;
+    return `<span class="b-photo bundle-photo" aria-hidden="true">${img}</span>`;
+  }
+
+  function bundleHTML(b, groups, inStock) {
+    const keys = new Set(b.items.map((x) => productKey(x.name)));
+    const rows = b.items.map((x, n) => {
+      const f = productFacts(groups.get(productKey(x.name)));
+      const warn = !f ? '<span class="below-cost">Not in inventory</span>'
+        : x.qty > f.onHand ? `<span class="below-cost">${f.onHand ? `Only ${f.onHand} on hand` : 'Sold out'}</span>` : '';
+      return `<li class="bundle-row" data-index="${n}">
+          ${bundlePhotoHTML(f ? f.photo : '')}
+          <span class="bundle-row-text"><span class="bundle-row-name">${esc(f ? f.name : x.name)}</span>${warn}</span>
+          <label class="bundle-qty"><span class="field-label">Qty</span><input type="number" class="bundle-qty-input" min="1" max="999" step="1" inputmode="numeric" value="${x.qty}" aria-label="How many ${esc(x.name)}"></label>
+          <button type="button" class="remove-item" data-action="bundle-remove-item" aria-label="Take ${esc(x.name)} out of the bundle">&times;</button>
+        </li>`;
+    }).join('');
+    const choices = inStock.filter((g) => !keys.has(g.key));
+    const t = bundleTotals(b, groups);
+    return `
+      <div class="b-item inv-item bundle" data-bundle="${esc(b.id)}">
+        <div class="inv-head">
+          <input type="text" class="bundle-name" placeholder="Bundle name, e.g. Laundry day" maxlength="${MAX_TEXT}" value="${esc(b.name)}" aria-label="Bundle name">
+          <button type="button" class="remove-item" data-action="bundle-delete" aria-label="Delete this bundle">&times;</button>
+        </div>
+        ${rows ? `<ul class="bundle-rows">${rows}</ul>` : '<p class="bundle-empty">No products yet. Pick some from your stock below.</p>'}
+        <label class="bundle-add"><span class="field-label">Add a product</span>
+          <select class="bundle-pick">
+            <option value="" selected>${choices.length ? 'Choose from your stock…' : inStock.length ? 'Everything in stock is in this bundle' : 'Nothing in stock yet'}</option>
+            ${choices.map((g) => `<option value="${esc(g.key)}">${esc(g.name)} (${g.onHand} on hand)</option>`).join('')}
+          </select>
+        </label>
+        <div class="b-grid b-grid-2 bundle-price-row">
+          <label><span class="field-label">My price for the bundle</span><input type="number" class="bundle-price" min="0" step="0.01" inputmode="decimal" value="${esc(blankIfZero(b.price))}" placeholder="${t.separately ? round2(t.separately).toFixed(2) : '0.00'}"></label>
+          <button type="button" class="add-button bundle-pdf" data-action="bundle-pdf"${b.items.length ? '' : ' disabled'}>Bundle PDF</button>
+        </div>
+        <div class="b-foot">${bundleFootHTML(b, groups)}</div>
+      </div>`;
+  }
+
+  const productGroups = () => new Map(buildInventory().map((g) => [g.key, g]));
+
+  function renderBundles() {
+    const groups = productGroups();
+    const inStock = Array.from(groups.values()).filter((g) => g.onHand > 0);
+    const q = searchQuery();
+    const shown = bundles.filter((b) => !q || has(b.name, q) || b.items.some((x) => {
+      const g = groups.get(productKey(x.name));
+      return has(x.name, q) || (g && g.lots.some((it) => itemSearchMatch(it, q)));
+    }));
+    bundleList.innerHTML = shown.length
+      ? shown.map((b) => bundleHTML(b, groups, inStock)).join('')
+      : `<p class="empty-note">${q && bundles.length ? 'No bundles match that search.' : 'No bundles yet. Tap “+ New bundle” to put products together and sell them at one price.'}</p>`;
+    showPhotos(bundleList);
+  }
+
+  const bundleOf = (el) => {
+    const card = el.closest('[data-bundle]');
+    return card ? bundles.find((b) => b.id === card.dataset.bundle) : null;
+  };
+
+  $('#add-bundle').addEventListener('click', () => {
+    const b = cleanBundle({});
+    bundles.unshift(b);
+    searchInput.value = '';
+    saveBundles();
+    renderBundles();
+    const name = $(`[data-bundle="${CSS.escape(b.id)}"] .bundle-name`, bundleList);
+    if (name) { name.scrollIntoView({ block: 'center' }); name.focus(); }
+  });
+
+  // Typing updates the totals in place, so the box you're in keeps focus.
+  bundleList.addEventListener('input', (e) => {
+    const el = e.target;
+    const b = bundleOf(el);
+    if (!b) return;
+    if (el.classList.contains('bundle-name')) {
+      b.name = cleanText(el.value);
+    } else if (el.classList.contains('bundle-price')) {
+      b.price = cleanMoney(el.value);
+    } else if (el.classList.contains('bundle-qty-input')) {
+      const x = b.items[Number(el.closest('.bundle-row').dataset.index)];
+      if (!x || el.value === '') return;
+      x.qty = Math.min(999, Math.max(1, Math.round(num(el.value) || 1)));
+    } else {
+      return;
+    }
+    saveBundles();
+    const card = el.closest('[data-bundle]');
+    $('.b-foot', card).innerHTML = bundleFootHTML(b, productGroups());
+  });
+
+  bundleList.addEventListener('change', (e) => {
+    const el = e.target;
+    const b = bundleOf(el);
+    if (!b) return;
+    if (el.classList.contains('bundle-pick')) {
+      const g = productGroups().get(el.value);
+      if (!g || b.items.length >= MAX_BUNDLE_ITEMS) return;
+      b.items.push({ name: g.name, qty: 1 });
+      saveBundles();
+    } else if (!el.classList.contains('bundle-qty-input') && !el.classList.contains('bundle-price')) {
+      return;
+    }
+    // Leaving a box redraws the card: a cleared count goes back to what it
+    // had, and stock warnings and the price hint catch up.
+    renderBundles();
+  });
+
+  bundleList.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-action]');
+    const b = btn && bundleOf(btn);
+    if (!b) return;
+    if (btn.dataset.action === 'bundle-remove-item') {
+      b.items.splice(Number(btn.closest('.bundle-row').dataset.index), 1);
+    } else if (btn.dataset.action === 'bundle-delete') {
+      if (!await window.appConfirm({
+        title: `Delete ${b.name || 'this bundle'}?`,
+        message: 'Only the bundle goes. Its products stay in your inventory.',
+        confirmText: 'Delete', cancelText: 'Keep', danger: true,
+      })) return;
+      bundles = bundles.filter((x) => x !== b);
+    } else if (btn.dataset.action === 'bundle-pdf') {
+      exportBundle(b, btn);
+      return;
+    } else {
+      return;
+    }
+    saveBundles();
+    renderBundles();
+  });
+
+  // The bundle PDF: its products (photo, name, how many) and, at the end,
+  // the whole bundle's retail value against your price. No item prices,
+  // costs or profit are included.
+  async function exportBundle(b, btn) {
+    if (!b.items.length) return;
+    const groups = productGroups();
+    const t = bundleTotals(b, groups);
+    btn.disabled = true;
+    showInvMessage('Making the bundle PDF…', '');
+    try {
+      await loadPdfMaker();
+      const rows = await Promise.all(b.items.map(async (x) => {
+        const f = productFacts(groups.get(productKey(x.name)));
+        const photo = f && f.photo;
+        const src = !photo ? null : IMAGE_RE.test(photo) ? photo : await photoStore.get(photo);
+        return { name: f ? f.name : x.name, qty: x.qty, img: src ? await photoForPdf(src) : null };
+      }));
+
+      const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const M = 36;
+      const PHOTO = 60;
+      const ROW_PAD = 6;
+      const colQty = pageW - M;
+      const colName = M + PHOTO + 12;
+      const nameWidth = colQty - 60 - colName;
+      const title = b.name.trim() || 'Bundle';
+      const dateText = formatDate(today());
+      const TOTALS_H = 110;
+
+      const header = () => {
+        let y = M;
+        doc.setFont('helvetica', 'bold').setFontSize(18);
+        const titleLines = doc.splitTextToSize(title, pageW - M * 2).slice(0, 2);
+        doc.text(titleLines, M, y + 14);
+        y += (titleLines.length - 1) * 20;
+        doc.setFont('helvetica', 'normal').setFontSize(10).text(`Bundle of ${t.units} item${t.units === 1 ? '' : 's'} - ${dateText}`, M, y + 30);
+        y += 50;
+        doc.setFont('helvetica', 'bold').setFontSize(10);
+        doc.text('Photo', M, y);
+        doc.text("What's included", colName, y);
+        doc.text('Qty', colQty, y, { align: 'right' });
+        y += 6;
+        doc.setDrawColor(0).setLineWidth(1).line(M, y, pageW - M, y);
+        return y;
+      };
+
+      let y = header();
+      rows.forEach((r) => {
+        doc.setFont('helvetica', 'normal').setFontSize(11);
+        const lines = doc.splitTextToSize(r.name, nameWidth).slice(0, 4);
+        const rowH = Math.max(PHOTO, lines.length * 14) + ROW_PAD * 2;
+        if (y + rowH > pageH - M) {
+          doc.addPage();
+          y = header();
+          doc.setFont('helvetica', 'normal').setFontSize(11);
+        }
+        const top = y + ROW_PAD;
+        const mid = y + rowH / 2;
+        if (r.img) {
+          const s = PHOTO / Math.max(r.img.w, r.img.h);
+          const w = r.img.w * s, h = r.img.h * s;
+          doc.addImage(r.img.data, 'JPEG', M + (PHOTO - w) / 2, top + (PHOTO - h) / 2, w, h);
+        }
+        doc.text(lines, colName, mid - ((lines.length - 1) * 14) / 2 + 4);
+        doc.text(String(r.qty), colQty, mid + 4, { align: 'right' });
+        y += rowH;
+        doc.setDrawColor(160).setLineWidth(0.5).line(M, y, pageW - M, y);
+      });
+
+      // The totals stay together at the end.
+      if (y + TOTALS_H > pageH - M) { doc.addPage(); y = M; }
+      y += 30;
+      const labelX = pageW - M - 220;
+      doc.setFont('helvetica', 'normal').setFontSize(12);
+      doc.text('Retail value', labelX, y);
+      doc.text(money(t.retail), colQty, y, { align: 'right' });
+      if (t.retail > t.price) {
+        const w = doc.getTextWidth(money(t.retail));
+        doc.setDrawColor(0).setLineWidth(0.8).line(colQty - w, y - 4, colQty, y - 4);
+      }
+      y += 26;
+      doc.setFont('helvetica', 'bold').setFontSize(16);
+      doc.text('My price', labelX, y);
+      doc.text(money(t.price), colQty, y, { align: 'right' });
+      const saved = round2(t.retail - t.price);
+      if (saved > 0) {
+        y += 22;
+        doc.setFont('helvetica', 'normal').setFontSize(11);
+        doc.text(`You save ${money(saved)} (${pct(saved, t.retail)}% off retail)`, colQty, y, { align: 'right' });
+      }
+
+      const fileName = title.replace(/[^\w ,&'-]/g, '').trim();
+      doc.save(`Bundle${fileName && fileName !== 'Bundle' ? ` ${fileName}` : ''} ${today()}.pdf`);
+      showInvMessage(t.missing
+        ? `Bundle PDF saved, but ${t.missing} of its products ${t.missing === 1 ? 'isn’t' : 'aren’t'} in your inventory, so the retail value leaves ${t.missing === 1 ? 'it' : 'them'} out.`
+        : 'Bundle PDF saved.', t.missing ? 'unmet' : 'met');
+    } catch (err) {
+      showInvMessage(err.message || 'Couldn’t make the bundle PDF.', 'unmet');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   // ---------- Booth pricing controls ----------
   const pricingPct = $('#pricing-pct');
   const pricingCommission = $('#pricing-commission');
@@ -1158,27 +1518,34 @@
   }
 
   function setView(mode) {
-    const inv = mode === 'inventory';
-    viewInputs.forEach((r) => { r.checked = r.value === (inv ? 'inventory' : 'trips'); });
-    // Trips get "+ New trip"; Inventory gets "+ Single item".
-    addHaulBtn.hidden = inv;
+    const view = mode === 'inventory' || mode === 'bundles' ? mode : 'trips';
+    const inv = view === 'inventory';
+    viewInputs.forEach((r) => { r.checked = r.value === view; });
+    // Trips get "+ New haul"; Inventory gets "+ Single item"; Bundles "+ New bundle".
+    addHaulBtn.hidden = view !== 'trips';
     $('#add-loose').hidden = !inv;
     $('#export-sheet').hidden = !inv;
+    $('#add-bundle').hidden = view !== 'bundles';
+    tripFilters.hidden = view === 'bundles';
     catFilters.hidden = true;
-    filterInputs.forEach((r) => { r.checked = r.value === viewFilter[inv ? 'inventory' : 'trips']; });
-    haulList.hidden = inv;
+    if (view !== 'bundles') filterInputs.forEach((r) => { r.checked = r.value === viewFilter[view]; });
+    haulList.hidden = view !== 'trips';
     invList.hidden = !inv;
-    if (!inv) invMessage.hidden = true;
-    try { localStorage.setItem(VIEW_KEY, inv ? 'inventory' : 'trips'); } catch (e) { /* storage unavailable */ }
+    bundleList.hidden = view !== 'bundles';
+    if (view === 'trips') invMessage.hidden = true;
+    try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* storage unavailable */ }
     render();
   }
+
+  const shownList = () => ({ inventory: invList, bundles: bundleList }[viewMode()] || haulList);
 
   viewInputs.forEach((r) => r.addEventListener('change', () => setView(viewMode())));
 
   function render() {
     renderSummary();
     renderCategoryPanel();
-    if (viewMode() === 'inventory') renderInventory(); else renderHauls();
+    const mode = viewMode();
+    if (mode === 'inventory') renderInventory(); else if (mode === 'bundles') renderBundles(); else renderHauls();
     refreshItemEditor();
   }
 
@@ -1787,7 +2154,7 @@
         if (action === 'show') {
           searchInput.value = code;
           render();
-          (viewMode() === 'inventory' ? invList : haulList).scrollIntoView({ block: 'start' });
+          shownList().scrollIntoView({ block: 'start' });
         } else if (action === 'add' || action === 'add-loose') {
           let haulId = '';
           if (action === 'add') {
@@ -2102,7 +2469,7 @@
   // ---------- Calculator build ----------
   // The calculator (script.js) owns its working copy and saved scenarios;
   // the sync just carries them to and from the sheet's "Calculator" tab as
-  // one JSON string. Booth pricing, your categories and the merge times
+  // one JSON string. Booth pricing, your categories, bundles and the merge times
   // below ride along in the same string.
   const calc = window.calcSync;
   document.addEventListener('calc:change', () => {
@@ -2127,7 +2494,7 @@
   const BUILD_KEY = '~build';
   const PRICING_KEY_SYNC = '~pricing';
   const CATEGORIES_KEY_SYNC = '~categories';
-  const META_KEY_RE = /^(?:[his]:[A-Za-z0-9_-]{1,40}|~build|~pricing|~categories)$/;
+  const META_KEY_RE = /^(?:[hisb]:[A-Za-z0-9_-]{1,40}|~build|~pricing|~categories)$/;
   // Long enough for every device to have synced since.
   const FORGET_DELETED_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -2171,6 +2538,7 @@
     data.hauls.forEach((h) => out.set(`h:${h.id}`, h));
     data.items.forEach((it) => out.set(`i:${it.id}`, it));
     c.scenarios.forEach((sc) => out.set(`s:${sc.id}`, sc));
+    bundles.forEach((b) => out.set(`b:${b.id}`, b));
     out.set(BUILD_KEY, c.build);
     out.set(PRICING_KEY_SYNC, pricing);
     out.set(CATEGORIES_KEY_SYNC, categories);
@@ -2244,6 +2612,7 @@
     (Array.isArray(build.scenarios) ? build.scenarios : []).forEach((sc) => {
       if (sc && typeof sc === 'object' && validId(sc.id)) remote.set(`s:${sc.id}`, sc);
     });
+    cleanBundles(build.bundles).forEach((b) => remote.set(`b:${b.id}`, b));
     if (build.build && typeof build.build === 'object') remote.set(BUILD_KEY, build.build);
     if (build.pricing && typeof build.pricing === 'object') remote.set(PRICING_KEY_SYNC, cleanPricing(build.pricing));
     if (Array.isArray(build.categories)) remote.set(CATEGORIES_KEY_SYNC, cleanCategories(build.categories));
@@ -2286,6 +2655,7 @@
     }
     if (kept.has(PRICING_KEY_SYNC)) loadPricing(kept.get(PRICING_KEY_SYNC));
     if (kept.has(CATEGORIES_KEY_SYNC)) loadCategories(kept.get(CATEGORIES_KEY_SYNC));
+    loadBundles(pick('b:'));
     const nextCalc = { build: kept.get(BUILD_KEY) || calc.get().build, scenarios: pick('s:') };
     if (fingerprint(calc.get()) !== fingerprint(nextCalc)) calc.load(nextCalc);
 
@@ -2349,7 +2719,7 @@
         const c = itemCalc(it);
         return { ...it, unitCost: r2(c.unitCost), status: STATUS_LABELS[c.status], profit: r2(c.profit) };
       }),
-      calc: JSON.stringify({ ...calc.get(), pricing, categories, sync: { stamps: meta.stamps, deleted: meta.deleted } }),
+      calc: JSON.stringify({ ...calc.get(), pricing, categories, bundles, sync: { stamps: meta.stamps, deleted: meta.deleted } }),
     };
   }
 

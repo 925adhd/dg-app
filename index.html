@@ -171,6 +171,7 @@
         <div class="segmented" role="radiogroup" aria-label="View">
           <label class="segment"><input type="radio" name="bought-view" value="trips" checked><span>By haul</span></label>
           <label class="segment"><input type="radio" name="bought-view" value="inventory"><span>Inventory</span></label>
+          <label class="segment"><input type="radio" name="bought-view" value="bundles"><span>Bundles</span></label>
         </div>
         <div class="filter-chips" id="trip-filters" role="radiogroup" aria-label="Show">
           <label class="filter-chip"><input type="radio" name="bought-filter" value="all" checked><span>All</span></label>
@@ -181,6 +182,7 @@
           <button type="button" class="add-haul add-loose" id="export-sheet" title="Save a PDF price list of the in-stock items shown, to share with customers" hidden>Price list PDF</button>
           <button type="button" class="add-haul add-loose" id="add-loose" title="Add one item to your inventory without starting a haul">+ Single item</button>
           <button type="button" class="add-haul" id="add-haul" title="Start a new haul and add what you bought">+ New haul</button>
+          <button type="button" class="add-haul" id="add-bundle" title="Put products together to sell as one bundle" hidden>+ New bundle</button>
         </div>
       </div>
       <div class="filter-chips cat-filters" id="cat-filters" role="radiogroup" aria-label="Category" hidden></div>
@@ -188,6 +190,7 @@
 
       <div id="haul-list"></div>
       <div id="inv-list" hidden></div>
+      <div id="bundle-list" hidden></div>
 
       <details class="sync-panel">
         <summary>
