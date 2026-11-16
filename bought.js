@@ -1222,7 +1222,78 @@
           <button type="button" class="add-button bundle-pdf" data-action="bundle-pdf"${b.items.length ? '' : ' disabled'}>Bundle PDF</button>
         </div>
         <div class="b-foot">${bundleFootHTML(b, groups)}</div>
+        ${b.items.length ? `<details class="b-sale">
+          <summary>Record a sale</summary>
+          <div class="b-grid">
+            <label><span class="field-label">Bundles sold</span><input type="number" class="bundle-sell-count" min="1" step="1" inputmode="numeric" value="1"></label>
+            <label><span class="field-label">Sold for (total)</span><input type="number" class="bundle-sell-total" min="0" step="0.01" inputmode="decimal" placeholder="${t.price ? round2(t.price).toFixed(2) : '0.00'} each"></label>
+            <label><span class="field-label">Fees &amp; shipping</span><input type="number" class="bundle-sell-fees" min="0" step="0.01" inputmode="decimal" placeholder="${pricing.commission ? `${pricing.commission}% commission` : '0.00'}"></label>
+            <label><span class="field-label">Sold on</span><input type="text" class="bundle-sell-platform" maxlength="${MAX_TEXT}" placeholder="e.g. Facebook"></label>
+          </div>
+          ${pricing.commission ? `<label class="inv-sell-outside"><input type="checkbox" class="bundle-sell-outside"> Sold outside the booth (no ${pricing.commission}% commission)</label>` : ''}
+          <p class="haul-receipt-note">Takes the products out of stock and splits the money and fees across them by their resell prices, so each one's profit is right.</p>
+          <button type="button" class="add-button inv-sell-btn" data-action="bundle-sell">Record bundle sale</button>
+        </details>` : ''}
       </div>`;
+  }
+
+  // Sells n of a bundle: each product's units come out of stock (oldest
+  // first, like Inventory), and the total and fees are shared out by what
+  // each product would sell for on its own.
+  function recordBundleSale(b, n, total, fees, platform, groups) {
+    const parts = b.items.map((x) => {
+      const g = groups.get(productKey(x.name));
+      return { g, f: productFacts(g), units: x.qty * n };
+    });
+    const weightBy = (fn) => parts.map((p) => fn(p) * p.units);
+    let weights = weightBy((p) => p.f.resale);
+    if (!weights.some((w) => w > 0)) weights = weightBy((p) => p.f.retail);
+    if (!weights.some((w) => w > 0)) weights = weightBy(() => 1);
+    const sum = weights.reduce((s, w) => s + w, 0);
+    let totalLeft = total, feesLeft = fees;
+    parts.forEach((p, i) => {
+      const last = i === parts.length - 1;
+      const share = last ? totalLeft : round2(total * (weights[i] / sum));
+      const feeShare = last ? feesLeft : round2(fees * (weights[i] / sum));
+      totalLeft = round2(totalLeft - share);
+      feesLeft = round2(feesLeft - feeShare);
+      recordSale(p.g, p.units, share, feeShare, platform);
+    });
+  }
+
+  async function onBundleSale(b, card) {
+    const groups = productGroups();
+    const n = Math.round(num($('.bundle-sell-count', card).value));
+    if (n < 1) { showInvMessage('Enter how many bundles you sold.', 'unmet'); return; }
+    const missing = b.items.filter((x) => !groups.get(productKey(x.name)));
+    if (missing.length) {
+      showInvMessage(`${missing.map((x) => x.name).join(', ')} ${missing.length === 1 ? 'isn’t' : 'aren’t'} in your inventory. Take ${missing.length === 1 ? 'it' : 'them'} out of the bundle first.`, 'unmet');
+      return;
+    }
+    const short = b.items.filter((x) => x.qty * n > groups.get(productKey(x.name)).onHand);
+    if (short.length) {
+      showInvMessage(`Not enough in stock for ${n === 1 ? 'this bundle' : `${n} bundles`}: ${short.map((x) => `${x.name} (${groups.get(productKey(x.name)).onHand} on hand)`).join(', ')}.`, 'unmet');
+      return;
+    }
+    const t = bundleTotals(b, groups);
+    const totalInput = $('.bundle-sell-total', card).value;
+    const total = totalInput === '' ? round2(t.price * n) : cleanMoney(totalInput);
+    const feesInput = $('.bundle-sell-fees', card).value;
+    const outside = $('.bundle-sell-outside', card)?.checked;
+    // Blank fees + a commission set = the commission is the fee, unless it
+    // sold outside the booth.
+    const fees = feesInput === '' && !outside ? round2(total * (pricing.commission / 100)) : cleanMoney(feesInput);
+    const platform = cleanText($('.bundle-sell-platform', card).value.trim());
+    const name = b.name.trim() || 'this bundle';
+    if (!await window.appConfirm({
+      title: `Record ${n === 1 ? 'a sale' : `${n} sales`} of ${name}?`,
+      message: `${money(total)}${fees ? ` with ${money(fees)} fees` : ''}. ${t.units * n} item${t.units * n === 1 ? '' : 's'} come out of stock: ${b.items.map((x) => `${x.qty * n} × ${x.name}`).join(', ')}.`,
+      confirmText: 'Record sale', cancelText: 'Cancel',
+    })) return;
+    recordBundleSale(b, n, total, fees, platform, groups);
+    save();
+    render();
+    showInvMessage(`Recorded: ${n === 1 ? '' : `${n} × `}${name} sold for ${money(total)}${fees ? ` (${money(fees)} fees)` : ''}. The bundle is kept so you can sell it again.`, 'met');
   }
 
   const productGroups = () => new Map(buildInventory().map((g) => [g.key, g]));
@@ -1269,6 +1340,9 @@
       const x = b.items[Number(el.closest('.bundle-row').dataset.index)];
       if (!x || el.value === '') return;
       x.qty = Math.min(999, Math.max(1, Math.round(num(el.value) || 1)));
+    } else if (el.classList.contains('bundle-sell-outside')) {
+      $('.bundle-sell-fees', el.closest('[data-bundle]')).placeholder = el.checked ? '0.00' : `${pricing.commission}% commission`;
+      return;
     } else {
       return;
     }
@@ -1309,6 +1383,9 @@
       bundles = bundles.filter((x) => x !== b);
     } else if (btn.dataset.action === 'bundle-pdf') {
       exportBundle(b, btn);
+      return;
+    } else if (btn.dataset.action === 'bundle-sell') {
+      onBundleSale(b, btn.closest('[data-bundle]'));
       return;
     } else {
       return;
