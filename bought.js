@@ -1416,14 +1416,25 @@
       const pageW = doc.internal.pageSize.getWidth();
       const pageH = doc.internal.pageSize.getHeight();
       const M = 36;
-      const PHOTO = 60;
       const ROW_PAD = 6;
       const colQty = pageW - M;
-      const colName = M + PHOTO + 12;
+      const colName = M + 60 + 12;
       const nameWidth = colQty - 60 - colName;
       const title = b.name.trim() || 'Bundle';
       const dateText = formatDate(today());
-      const TOTALS_H = 110;
+      const saved = round2(t.retail - t.price);
+      // Exactly what the price block below the list takes up.
+      const TOTALS_H = 30 + 26 + (saved > 0 ? 22 : 0) + 6;
+
+      // Rows shrink a little (smaller photos) when that keeps the whole
+      // bundle, price included, on one page; a bundle too long for that
+      // runs onto more pages at full size.
+      doc.setFont('helvetica', 'bold').setFontSize(18);
+      const headerBottom = M + (doc.splitTextToSize(title, pageW - M * 2).slice(0, 2).length - 1) * 20 + 56;
+      doc.setFont('helvetica', 'normal').setFontSize(11);
+      const lineCounts = rows.map((r) => doc.splitTextToSize(r.name, nameWidth).slice(0, 4).length);
+      const rowsHeight = (photo) => lineCounts.reduce((s, n) => s + Math.max(photo, n * 14) + ROW_PAD * 2, 0);
+      const PHOTO = [60, 56, 52, 48, 44, 40, 36].find((p) => headerBottom + rowsHeight(p) + TOTALS_H <= pageH - M) || 60;
 
       const header = () => {
         let y = M;
@@ -1457,7 +1468,7 @@
         if (r.img) {
           const s = PHOTO / Math.max(r.img.w, r.img.h);
           const w = r.img.w * s, h = r.img.h * s;
-          doc.addImage(r.img.data, 'JPEG', M + (PHOTO - w) / 2, top + (PHOTO - h) / 2, w, h);
+          doc.addImage(r.img.data, 'JPEG', M + (60 - w) / 2, top + (PHOTO - h) / 2, w, h);
         }
         doc.text(lines, colName, mid - ((lines.length - 1) * 14) / 2 + 4);
         doc.text(String(r.qty), colQty, mid + 4, { align: 'right' });
@@ -1480,7 +1491,6 @@
       doc.setFont('helvetica', 'bold').setFontSize(16);
       doc.text('My price', labelX, y);
       doc.text(money(t.price), colQty, y, { align: 'right' });
-      const saved = round2(t.retail - t.price);
       if (saved > 0) {
         y += 22;
         doc.setFont('helvetica', 'normal').setFontSize(11);
