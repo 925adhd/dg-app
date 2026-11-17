@@ -2,9 +2,13 @@
 // password (HTTP Basic Auth). The password lives in the SITE_PASSWORD
 // environment variable in Vercel, never in this public repo. If it isn't
 // set, everyone is locked out rather than let in.
-// The site icons skip the password: iPhones fetch the home-screen icon
-// without the login, so behind it they'd get an error page instead.
-const OPEN_PATHS = new Set(['/apple-touch-icon.png', '/favicon.svg', '/favicon-32.png']);
+// The site icons skip the password: phones fetch icons without the login,
+// so behind it they'd get an error page instead. The .ico and precomposed
+// files are the default addresses tried when the page itself can't be read.
+const OPEN_PATHS = new Set([
+  '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png',
+  '/favicon.svg', '/favicon-32.png', '/favicon.ico',
+]);
 
 export default function middleware(request) {
   if (OPEN_PATHS.has(new URL(request.url).pathname)) {
